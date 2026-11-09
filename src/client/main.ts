@@ -173,8 +173,13 @@ function hero(jobs: JobView[]): HTMLElement {
     { class: "hero-stats" },
     h("p", { class: "kicker" }, "Crew"),
     title,
-    h("p", { class: "statline" }, `${done.length} done · ${streak}-day streak`),
-    meter(progress.current, progress.goal, `${progress.current} of ${progress.goal} toward the next level`, "player"),
+    h(
+      "div",
+      { class: "stat-row" },
+      h("span", {}, `${done.length} done · ${streak}-day streak`),
+      h("span", { class: "meter-label" }, `${progress.current} / next level`),
+    ),
+    xpBar(progress.current, progress.goal, `${progress.current} of ${progress.goal} toward the next level`, "player"),
   );
   return h("header", { class: "hero" }, stats);
 }
@@ -182,15 +187,15 @@ function hero(jobs: JobView[]): HTMLElement {
 function questBlock(data: Bootstrap): HTMLElement {
   const items = questItems(data);
   const ready = items.filter((item) => item.ready).length;
-  const block = h("section", { class: "quest" }, h("div", { class: "quest-top" }, h("h2", {}, "Setup quest"), h("span", { class: "count-badge" }, `${ready}/${items.length}`)), meter(ready, items.length, `${ready} of ${items.length} setup steps ready`, undefined, `${ready} / ${items.length}`));
   const list = h("ul", { class: "quest-list" });
   for (const item of items) {
-    const row = h("li", {}, chip(item.ready ? "green" : "amber", item.ready ? "Ready" : "Setup"), h("span", {}, item.label));
-    row.append(more(item.detail));
-    list.append(row);
+    list.append(h("li", {}, tick(item.ready), h("span", {}, item.label)));
   }
-  block.append(fold("Quest details", list, h("p", {}, "Steps and variable names are in the setup guide.")));
-  return block;
+  const card = fold("Quest details", list);
+  card.classList.add("quest-card");
+  const summary = card.querySelector("summary");
+  summary?.append(h("span", { class: "count-badge" }, `${ready}/${items.length}`));
+  return card;
 }
 
 function needsStrip(jobs: JobView[]): HTMLElement {
@@ -200,7 +205,7 @@ function needsStrip(jobs: JobView[]): HTMLElement {
   const questOpen = desk ? questItems(desk).some((item) => !item.ready) : false;
   const count = urgent.length + (questOpen ? 1 : 0);
   const tone = urgent.some((job) => jobTone(job.status, job.stale) === "red") ? "red" : count === 0 ? "green" : "amber";
-  const strip = h("section", { class: `needs-banner tone-${tone}`, "aria-label": "Needs you" });
+  const strip = h("section", { class: `needs-banner banner-${tone}`, "aria-label": "Needs you" });
   const head = h("div", { class: "banner-head" }, h("h2", {}, "Needs you"), h("span", { class: "count-badge" }, String(count)));
   strip.append(head);
   if (count === 0) {
@@ -209,15 +214,25 @@ function needsStrip(jobs: JobView[]): HTMLElement {
   }
   const list = h("ul", { class: "need-list" });
   for (const job of urgent) list.append(needJob(job));
-  if (questOpen) list.append(h("li", { class: "need" }, chip("amber", "Setup"), h("span", {}, "Setup quest is open")));
+  if (questOpen) list.append(attentionRow("amber", "Setup", "Setup quest is open", h("p", {}, "Open Quest details for the remaining steps.")));
   strip.append(list);
   return strip;
 }
 
 function needJob(job: JobView): HTMLElement {
   const tone = jobTone(job.status, job.stale);
-  const row = h("li", { class: "need" }, chip(tone, statusLabel(job.status, job.stale)), h("span", {}, jobSummary(job.task, job.taskLabel, job.status, job.stale)));
-  row.append(jobMore(job));
+  return attentionRow(tone, statusLabel(job.status, job.stale), jobSummary(job.task, job.taskLabel, job.status, job.stale), jobDetails(job));
+}
+
+function attentionRow(tone: Tone, chipLabel: string, summary: string, extra: Node): HTMLElement {
+  const row = h("li", { class: "need-row" }, statusMark(tone), h("span", { class: "need-line" }, summary), chip(tone, chipLabel));
+  const details = document.createElement("details");
+  details.className = "need-more";
+  const label = document.createElement("summary");
+  label.setAttribute("aria-label", "More");
+  label.append(chevron());
+  details.append(label, extra);
+  row.append(details);
   return row;
 }
 
@@ -231,10 +246,23 @@ function agentCard(agent: AgentInfo, jobs: JobView[]): HTMLElement {
   const done = jobs.filter((job) => job.status === "completed").length;
   const progress = levelProgress(done);
   const card = h("a", { class: "agent-card", href: agentPath(agent.slug), "data-agent": agent.slug });
-  card.append(medallion(agent.slug), h("span", { class: "agent-name" }, agent.name), h("span", { class: "role" }, shortRole(agent)), h("span", { class: "level" }, `Lv ${progress.level} · ${done} done`));
-  card.append(meter(progress.current, progress.goal, `${agent.name} level progress`, agent.slug));
   const flag = cardFlag(agent, jobs);
-  if (flag) card.append(flag);
+  if (flag) {
+    flag.classList.add("card-flag");
+    card.append(flag);
+  }
+  card.append(
+    medallion(agent.slug),
+    h("span", { class: "agent-name" }, agent.name),
+    h("span", { class: "role" }, shortRole(agent)),
+    h(
+      "div",
+      { class: "stat-row" },
+      h("span", {}, `Lv ${progress.level} · ${done} done`),
+      h("span", { class: "meter-label" }, `${progress.current} / next level`),
+    ),
+    xpBar(progress.current, progress.goal, `${agent.name} level progress`, agent.slug),
+  );
   card.addEventListener("click", (event) => go(event, agentPath(agent.slug)));
   return card;
 }
@@ -288,8 +316,13 @@ async function paintAgent(main: HTMLElement, agent: AgentInfo): Promise<void> {
       {},
       h("p", { class: "kicker" }, shortRole(agent)),
       h("h1", { class: "title" }, agent.name),
-      h("p", { class: "statline" }, `Lv ${progress.level} · ${done.length} done · ${completionStreak(done.map((job) => job.updatedAt), Date.now())}-day streak`),
-      meter(progress.current, progress.goal, `${agent.name} level progress`, agent.slug),
+      h(
+        "div",
+        { class: "stat-row" },
+        h("span", {}, `Lv ${progress.level} · ${done.length} done · ${completionStreak(done.map((job) => job.updatedAt), Date.now())}-day streak`),
+        h("span", { class: "meter-label" }, `${progress.current} / next level`),
+      ),
+      xpBar(progress.current, progress.goal, `${agent.name} level progress`, agent.slug),
     ),
   );
   head.dataset.agent = agent.slug;
@@ -297,18 +330,26 @@ async function paintAgent(main: HTMLElement, agent: AgentInfo): Promise<void> {
   const tasks = h("div", { class: "task-grid" });
   for (const task of agent.tasks) {
     const name = shortTask(task.key, task.label);
+    const locked = webhook !== "ready";
     const button = h(
       "button",
       { class: "start", type: "button" },
-      h("span", { class: "start-kicker" }, "Start"),
-      h("span", { class: "start-name" }, name),
+      locked ? lockIcon() : arrowIcon(),
+      h("span", {}, locked ? "Locked" : "Start"),
     ) as HTMLButtonElement;
-    button.disabled = webhook !== "ready";
+    button.disabled = locked;
     button.addEventListener("click", () => {
       pop(button);
       void runTask(agent, task.key, button, notice);
     });
-    const tile = h("div", { class: "task-tile", "data-agent": agent.slug }, button, infoToggle(name, task.detail));
+    const tile = h(
+      "div",
+      { class: locked ? "task-tile is-locked" : "task-tile", "data-agent": agent.slug },
+      taskGlyph(task.kind),
+      h("div", { class: "task-copy" }, h("strong", {}, name), h("p", { class: "task-blurb" }, task.detail)),
+      button,
+      infoToggle(name, task.detail),
+    );
     tasks.append(tile);
   }
   const rules = fold(
@@ -361,7 +402,7 @@ async function refreshAll(notice: HTMLElement): Promise<void> {
   if (main instanceof HTMLElement && main.dataset.paint === "overview") await paintOverview(main);
 }
 
-function jobMore(job: JobView): HTMLDetailsElement {
+function jobDetails(job: JobView): HTMLElement {
   const bits: Node[] = [h("p", {}, `${job.agent} · ${when(job.updatedAt)}`)];
   if (job.delivery === "accepted" && job.status === "requested") bits.push(h("p", {}, "Accepted, not completed."));
   if (job.error) bits.push(h("p", {}, job.error));
@@ -406,7 +447,9 @@ function jobMore(job: JobView): HTMLDetailsElement {
     actions.append(manual);
   }
   bits.push(actions);
-  return fold("Details", ...bits);
+  const body = h("div", { class: "need-body" });
+  for (const bit of bits) body.append(bit);
+  return body;
 }
 
 function questItems(data: Bootstrap): Array<{ label: string; ready: boolean; detail: string }> {
@@ -444,14 +487,69 @@ function shortRole(agent: AgentInfo): string {
   return roles[agent.slug] ?? agent.role;
 }
 
-function meter(current: number, goal: number, label: string, tint?: string, caption = `${current} / next level`): HTMLElement {
+function xpBar(current: number, goal: number, label: string, tint?: string): HTMLElement {
   const safeGoal = goal > 0 ? goal : 1;
-  const width = Math.max(0, Math.min(100, Math.round((current / safeGoal) * 100)));
-  const wrap = h("div", { class: tint === "player" ? "meter-wrap xp" : "meter-wrap" });
+  const wrap = h("div", { class: tint === "player" ? "seg-bar xp" : "seg-bar" });
   if (tint && tint !== "player") wrap.dataset.agent = tint;
-  const bar = h("div", { class: "meter", role: "meter", "aria-label": label, "aria-valuemin": "0", "aria-valuemax": String(safeGoal), "aria-valuenow": String(current) });
-  bar.append(h("span", { class: fillWidth(width) }));
-  wrap.append(bar, h("span", { class: "meter-label" }, caption));
+  const bar = h("div", {
+    class: "segments",
+    role: "meter",
+    "aria-label": label,
+    "aria-valuemin": "0",
+    "aria-valuemax": String(safeGoal),
+    "aria-valuenow": String(Math.max(0, current)),
+  });
+  for (let index = 0; index < safeGoal; index += 1) {
+    const state = index < current ? "on" : index === current ? "stub" : "off";
+    bar.append(h("span", { class: `seg ${state}` }));
+  }
+  wrap.append(bar);
+  return wrap;
+}
+
+function statusMark(tone: Tone): HTMLElement {
+  const mark = h("span", { class: `status-mark tone-${tone}`, "aria-hidden": "true" });
+  mark.append(icon(tone));
+  return mark;
+}
+
+function tick(ready: boolean): HTMLElement {
+  const mark = h("span", { class: ready ? "tick on" : "tick", "aria-hidden": "true" });
+  mark.append(ready ? icon("green") : icon("amber"));
+  return mark;
+}
+
+function glyph(path: string): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const shape = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  shape.setAttribute("fill", "currentColor");
+  shape.setAttribute("d", path);
+  svg.append(shape);
+  return svg;
+}
+
+function chevron(): SVGSVGElement {
+  return glyph("M9 6l6 6-6 6v-2.2L13 12 9 8.2z");
+}
+
+function lockIcon(): SVGSVGElement {
+  return glyph("M7 10V8a5 5 0 0110 0v2h1v10H6V10h1zm2 0h6V8a3 3 0 00-6 0v2z");
+}
+
+function arrowIcon(): SVGSVGElement {
+  return glyph("M5 12h12l-4-4 1.4-1.4L21 12l-6.6 5.4L13 16l4-4H5z");
+}
+
+function taskGlyph(kind: string): HTMLElement {
+  const wrap = h("span", { class: "task-glyph", "aria-hidden": "true" });
+  const path = kind === "post"
+    ? "M8 5v14l11-7z"
+    : kind === "draft"
+      ? "M4 20h4l10-10-4-4L4 16v4zm12.5-11.5l1.8-1.8 1.5 1.5-1.8 1.8-1.5-1.5z"
+      : "M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h10v2H4v-2z";
+  wrap.append(glyph(path));
   return wrap;
 }
 
@@ -541,10 +639,6 @@ function avatar(slug: string): SVGSVGElement {
     svg.append(path);
   }
   return svg;
-}
-
-function more(text: string): HTMLDetailsElement {
-  return fold("Details", h("p", {}, text));
 }
 
 function fold(summary: string, ...nodes: Node[]): HTMLDetailsElement {
