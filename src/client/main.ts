@@ -167,13 +167,14 @@ function hero(jobs: JobView[]): HTMLElement {
   const done = jobs.filter((job) => job.status === "completed");
   const progress = levelProgress(done.length);
   const streak = completionStreak(done.map((job) => job.updatedAt), Date.now());
+  const title = h("div", { class: "level-line" }, playerBadge(), h("h1", { class: "title" }, `Level ${progress.level}`));
   const stats = h(
     "div",
     { class: "hero-stats" },
     h("p", { class: "kicker" }, "Crew"),
-    h("h1", { class: "title" }, `Level ${progress.level}`),
+    title,
     h("p", { class: "statline" }, `${done.length} done · ${streak}-day streak`),
-    meter(progress.current, progress.goal, `${progress.current} of ${progress.goal} toward the next level`),
+    meter(progress.current, progress.goal, `${progress.current} of ${progress.goal} toward the next level`, "player"),
   );
   return h("header", { class: "hero" }, stats);
 }
@@ -181,7 +182,7 @@ function hero(jobs: JobView[]): HTMLElement {
 function questBlock(data: Bootstrap): HTMLElement {
   const items = questItems(data);
   const ready = items.filter((item) => item.ready).length;
-  const block = h("section", { class: "quest" }, h("div", { class: "quest-top" }, h("h2", {}, "Setup quest"), h("span", {}, `${ready}/${items.length}`)), meter(ready, items.length, `${ready} of ${items.length} setup steps ready`));
+  const block = h("section", { class: "quest" }, h("div", { class: "quest-top" }, h("h2", {}, "Setup quest"), h("span", { class: "count-badge" }, `${ready}/${items.length}`)), meter(ready, items.length, `${ready} of ${items.length} setup steps ready`, undefined, `${ready} / ${items.length}`));
   const list = h("ul", { class: "quest-list" });
   for (const item of items) {
     const row = h("li", {}, chip(item.ready ? "green" : "amber", item.ready ? "Ready" : "Setup"), h("span", {}, item.label));
@@ -193,21 +194,22 @@ function questBlock(data: Bootstrap): HTMLElement {
 }
 
 function needsStrip(jobs: JobView[]): HTMLElement {
-  const strip = h("section", { class: "needs", "aria-label": "Needs you" });
   const urgent = jobs
     .filter((job) => attentionRank(job.status, job.stale) !== null)
     .sort((a, b) => (attentionRank(a.status, a.stale) ?? 9) - (attentionRank(b.status, b.stale) ?? 9));
   const questOpen = desk ? questItems(desk).some((item) => !item.ready) : false;
-  if (urgent.length === 0 && !questOpen) {
-    strip.append(h("p", { class: "need clear" }, chip("green", "Clear"), h("span", {}, "Nothing needs you")));
+  const count = urgent.length + (questOpen ? 1 : 0);
+  const tone = urgent.some((job) => jobTone(job.status, job.stale) === "red") ? "red" : count === 0 ? "green" : "amber";
+  const strip = h("section", { class: `needs-banner tone-${tone}`, "aria-label": "Needs you" });
+  const head = h("div", { class: "banner-head" }, h("h2", {}, "Needs you"), h("span", { class: "count-badge" }, String(count)));
+  strip.append(head);
+  if (count === 0) {
+    strip.append(h("p", { class: "all-clear" }, chip("green", "All clear"), h("span", {}, "Nothing is waiting.")));
     return strip;
   }
-  strip.append(h("h2", { class: "section" }, "Needs you"));
   const list = h("ul", { class: "need-list" });
   for (const job of urgent) list.append(needJob(job));
-  if (questOpen) {
-    list.append(h("li", { class: "need" }, chip("amber", "Setup"), h("span", {}, "Setup quest is open")));
-  }
+  if (questOpen) list.append(h("li", { class: "need" }, chip("amber", "Setup"), h("span", {}, "Setup quest is open")));
   strip.append(list);
   return strip;
 }
@@ -230,7 +232,7 @@ function agentCard(agent: AgentInfo, jobs: JobView[]): HTMLElement {
   const progress = levelProgress(done);
   const card = h("a", { class: "agent-card", href: agentPath(agent.slug), "data-agent": agent.slug });
   card.append(medallion(agent.slug), h("span", { class: "agent-name" }, agent.name), h("span", { class: "role" }, shortRole(agent)), h("span", { class: "level" }, `Lv ${progress.level} · ${done} done`));
-  card.append(meter(progress.current, progress.goal, `${agent.name} level progress`));
+  card.append(meter(progress.current, progress.goal, `${agent.name} level progress`, agent.slug));
   const flag = cardFlag(agent, jobs);
   if (flag) card.append(flag);
   card.addEventListener("click", (event) => go(event, agentPath(agent.slug)));
@@ -247,7 +249,7 @@ function cardFlag(agent: AgentInfo, jobs: JobView[]): HTMLElement | null {
 }
 
 function recentBlock(jobs: JobView[], jobError: string | null, notice: HTMLElement): HTMLElement {
-  const block = h("section", { class: "recent" }, h("div", { class: "quest-top" }, h("h2", {}, "Recent"), reconcileButton(notice)));
+  const block = h("section", { class: "panel-card recent" }, h("div", { class: "banner-head" }, h("h2", {}, "Recent"), reconcileButton(notice)));
   block.append(notice);
   if (jobError) block.append(h("p", {}, jobError));
   else if (jobs.length === 0) block.append(h("p", { class: "empty" }, "No jobs yet."));
@@ -260,7 +262,7 @@ function recentBlock(jobs: JobView[], jobError: string | null, notice: HTMLEleme
 }
 
 function reconcileButton(notice: HTMLElement): HTMLButtonElement {
-  const button = h("button", { class: "text-button", type: "button" }, "Reconcile") as HTMLButtonElement;
+  const button = h("button", { class: "pill", type: "button" }, "Reconcile") as HTMLButtonElement;
   button.addEventListener("click", () => {
     pop(button);
     void refreshAll(notice);
@@ -287,41 +289,46 @@ async function paintAgent(main: HTMLElement, agent: AgentInfo): Promise<void> {
       h("p", { class: "kicker" }, shortRole(agent)),
       h("h1", { class: "title" }, agent.name),
       h("p", { class: "statline" }, `Lv ${progress.level} · ${done.length} done · ${completionStreak(done.map((job) => job.updatedAt), Date.now())}-day streak`),
-      meter(progress.current, progress.goal, `${agent.name} level progress`),
+      meter(progress.current, progress.goal, `${agent.name} level progress`, agent.slug),
     ),
   );
+  head.dataset.agent = agent.slug;
   if (webhook !== "ready") head.append(chip("amber", "Setup"));
-  const tasks = h("div", { class: "task-list" });
+  const tasks = h("div", { class: "task-grid" });
   for (const task of agent.tasks) {
+    const name = shortTask(task.key, task.label);
     const button = h(
       "button",
       { class: "start", type: "button" },
       h("span", { class: "start-kicker" }, "Start"),
-      h("span", { class: "start-name" }, shortTask(task.key, task.label)),
+      h("span", { class: "start-name" }, name),
     ) as HTMLButtonElement;
     button.disabled = webhook !== "ready";
     button.addEventListener("click", () => {
       pop(button);
       void runTask(agent, task.key, button, notice);
     });
-    tasks.append(h("div", { class: "task-row" }, button, more(task.detail)));
+    const tile = h("div", { class: "task-tile", "data-agent": agent.slug }, button, infoToggle(name, task.detail));
+    tasks.append(tile);
   }
   const rules = fold(
     "Rules",
     h("p", {}, agent.boundary),
-    agent.slug === "slack" ? h("p", {}, "Slack is this poster's name, not the Slack app.") : h("p", {}, "A 200 from the webhook means accepted, not finished."),
+    h("p", {}, agent.slug === "slack" ? "Slack is this poster's name, not the Slack app." : "A 200 from the webhook means accepted, not finished."),
     h("p", {}, webhook === "rejected_host" ? "The webhook host is not allowlisted, so Start stays off." : "Start stays off until this agent's webhook is configured."),
     h("p", {}, "Full prompts are in the setup guide. A button here does not lock a scheduled routine."),
   );
-  const jobsBlock = h("section", { class: "recent" }, h("h2", {}, "Jobs"), notice);
-  if (jobError) jobsBlock.append(h("p", {}, jobError));
-  else if (jobs.length === 0) jobsBlock.append(h("p", { class: "empty" }, "No jobs yet."));
+  rules.classList.add("rules");
+  const jobsBlock = h("section", { class: "panel-card activity", "data-agent": agent.slug }, h("h2", {}, "Jobs"), notice);
+  if (jobError) jobsBlock.append(h("p", { class: "empty-card" }, jobError));
+  else if (jobs.length === 0) jobsBlock.append(h("p", { class: "empty-card" }, "No jobs yet. A finished task will land here."));
   else {
     const list = h("ul", { class: "need-list", id: "jobs" });
     for (const job of jobs) list.append(needJob(job));
     jobsBlock.append(list);
   }
-  main.replaceChildren(head, tasks, rules, jobsBlock);
+  const left = h("div", { class: "task-col" }, tasks, rules);
+  main.replaceChildren(head, h("div", { class: "agent-layout" }, left, jobsBlock));
 }
 
 async function runTask(agent: AgentInfo, task: string, button: HTMLButtonElement, notice: HTMLElement): Promise<void> {
@@ -437,12 +444,50 @@ function shortRole(agent: AgentInfo): string {
   return roles[agent.slug] ?? agent.role;
 }
 
-function meter(current: number, goal: number, label: string): HTMLElement {
+function meter(current: number, goal: number, label: string, tint?: string, caption = `${current} / next level`): HTMLElement {
   const safeGoal = goal > 0 ? goal : 1;
   const width = Math.max(0, Math.min(100, Math.round((current / safeGoal) * 100)));
+  const wrap = h("div", { class: tint === "player" ? "meter-wrap xp" : "meter-wrap" });
+  if (tint && tint !== "player") wrap.dataset.agent = tint;
   const bar = h("div", { class: "meter", role: "meter", "aria-label": label, "aria-valuemin": "0", "aria-valuemax": String(safeGoal), "aria-valuenow": String(current) });
   bar.append(h("span", { class: fillWidth(width) }));
-  return bar;
+  wrap.append(bar, h("span", { class: "meter-label" }, caption));
+  return wrap;
+}
+
+function playerBadge(): HTMLElement {
+  const badge = h("span", { class: "player-badge", "aria-hidden": "true" });
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("fill", "currentColor");
+  path.setAttribute("d", "M12 2l2.4 5.6L20 8.2l-4 3.8.9 5.8L12 15.8 7.1 17.8 8 12 4 8.2l5.6-.6z");
+  svg.append(path);
+  badge.append(svg);
+  return badge;
+}
+
+function infoToggle(label: string, text: string): HTMLDetailsElement {
+  const node = document.createElement("details");
+  node.className = "info-pop";
+  const summary = document.createElement("summary");
+  summary.setAttribute("aria-label", `About ${label}`);
+  summary.append(infoIcon());
+  const copy = document.createElement("p");
+  copy.textContent = text;
+  node.append(summary, copy);
+  return node;
+}
+
+function infoIcon(): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("fill", "currentColor");
+  path.setAttribute("d", "M12 2a10 10 0 100 20 10 10 0 000-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z");
+  svg.append(path);
+  return svg;
 }
 
 function chip(tone: Tone, label: string): HTMLSpanElement {
