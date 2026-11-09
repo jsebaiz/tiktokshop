@@ -50,6 +50,96 @@ function reconcileAll() {
   return api("/api/automate/jobs/reconcile", { method: "POST", body: "{}" });
 }
 
+// src/shared/progress.ts
+var XP_PER_LEVEL = 3;
+function levelProgress(completed) {
+  const done = Number.isFinite(completed) && completed > 0 ? Math.floor(completed) : 0;
+  return {
+    level: 1 + Math.floor(done / XP_PER_LEVEL),
+    current: done % XP_PER_LEVEL,
+    goal: XP_PER_LEVEL
+  };
+}
+function completionStreak(isoTimes, nowMs) {
+  const days = /* @__PURE__ */ new Set();
+  for (const iso of isoTimes) {
+    const time = Date.parse(iso);
+    if (Number.isNaN(time)) continue;
+    days.add(new Date(time).toISOString().slice(0, 10));
+  }
+  if (days.size === 0) return 0;
+  const today = new Date(nowMs).toISOString().slice(0, 10);
+  const yesterday = shiftDay(today, -1);
+  let cursor = days.has(today) ? today : days.has(yesterday) ? yesterday : "";
+  if (!cursor) return 0;
+  let streak = 0;
+  while (days.has(cursor)) {
+    streak += 1;
+    cursor = shiftDay(cursor, -1);
+  }
+  return streak;
+}
+function shiftDay(day, delta) {
+  return new Date(Date.parse(`${day}T00:00:00.000Z`) + delta * 864e5).toISOString().slice(0, 10);
+}
+function jobTone(status, stale) {
+  if (status === "failed" || status === "needs input") return "red";
+  if (status === "unknown" || stale) return "amber";
+  if (status === "completed") return "green";
+  return "blue";
+}
+function attentionRank(status, stale) {
+  if (status === "failed") return 0;
+  if (status === "needs input") return 1;
+  if (status === "unknown" || stale) return 2;
+  return null;
+}
+function statusLabel(status, stale) {
+  if (status === "needs input") return "Needs you";
+  if (status === "failed") return "Failed";
+  if (stale) return "Stale";
+  if (status === "unknown") return "Unknown";
+  if (status === "running") return "Running";
+  if (status === "requested") return "Accepted";
+  if (status === "completed") return "Done";
+  return "Check";
+}
+var SHORT_TASK = {
+  "summarize-inbox": "Inbox summary",
+  "draft-retainer-reply": "Retainer draft",
+  "flag-deal-terms": "Deal terms",
+  "draft-slideshow-script": "Slideshow script",
+  "revise-overlay-text": "Overlay text",
+  "list-missing-copy": "Missing copy",
+  "preview-ready-post": "Post preview",
+  "post-next-brand": "Brand post",
+  "draft-invoice": "Invoice draft",
+  "reconcile-payments": "Payment check",
+  "list-overdue": "Overdue list",
+  "pull-performance": "Performance pull",
+  "weekly-scorecard": "Week scorecard",
+  "flag-outliers": "Outlier check",
+  "preview-postr": "Queue preview",
+  "post-next-original": "Original post",
+  "reconcile-posted": "Posted check"
+};
+function shortTask(task, fallback) {
+  return SHORT_TASK[task] ?? fallback.split(/\s+/).slice(0, 3).join(" ");
+}
+function jobSummary(task, taskLabel, status, stale) {
+  const name = shortTask(task, taskLabel);
+  let line = `${name} needs a look`;
+  if (status === "needs input") line = `${name} needs you`;
+  else if (status === "failed") line = `${name} failed`;
+  else if (stale) line = `${name} looks stale`;
+  else if (status === "unknown") line = `${name} is unknown`;
+  else if (status === "running") line = `${name} is running`;
+  else if (status === "requested") line = `${name} was accepted`;
+  else if (status === "completed") line = `${name} is done`;
+  if (line.split(/\s+/).length > 8) return "This job needs a look";
+  return line;
+}
+
 // src/client/main.ts
 var MAX_FILES = 20;
 var MAX_BYTES = 30 * 1024 * 1024;
@@ -99,8 +189,8 @@ function renderShell() {
   const root = document.querySelector("#app");
   if (!root || !desk) return;
   const nav = h("nav", { class: "nav", "aria-label": "Desk" });
-  nav.append(navLink("/automate", "Overview"), navLink("/automate/drive", "Drive"));
-  for (const agent of desk.agents) nav.append(navLink(agentPath(agent.slug), agent.name));
+  nav.append(navLink("/automate", "Crew"), navLink("/automate/drive", "Drive"));
+  for (const agent of desk.agents) nav.append(navLink(agentPath(agent.slug), agent.name, agent.slug));
   const brand = h(
     "a",
     { class: "brand", href: "/automate" },
@@ -112,8 +202,9 @@ function renderShell() {
   const main = h("div", { class: "main", id: "main" });
   root.replaceChildren(h("div", { class: "shell" }, rail, main));
 }
-function navLink(href, label) {
+function navLink(href, label, agent) {
   const link = h("a", { class: "nav-link", href }, label);
+  if (agent) link.dataset.agent = agent;
   link.addEventListener("click", (event) => go(event, href));
   return link;
 }
@@ -134,11 +225,12 @@ function markNav() {
 function renderRoute() {
   markNav();
   const main = document.querySelector("#main");
-  if (!main || !desk) return;
+  if (!(main instanceof HTMLElement) || !desk) return;
   const path = window.location.pathname.replace(/\/$/, "") || "/automate";
   main.replaceChildren();
   if (path === "/automate") {
-    renderOverview(main);
+    main.dataset.paint = "overview";
+    void paintOverview(main);
     return;
   }
   if (path === "/automate/drive") {
@@ -148,136 +240,166 @@ function renderRoute() {
   const match = path.match(/^\/automate\/agents\/([a-z]+)$/);
   const agent = desk.agents.find((item) => item.slug === match?.[1]);
   if (agent) {
-    renderAgent(main, agent);
+    main.dataset.paint = agent.slug;
+    void paintAgent(main, agent);
     return;
   }
   main.append(h("h1", { class: "title" }, "Not found"), h("p", {}, "That desk page does not exist."));
 }
-function renderOverview(main) {
-  if (!desk) return;
-  main.append(
-    h("p", { class: "kicker" }, "Private"),
-    h("h1", { class: "title" }, "Six desks, one owner."),
-    h(
-      "p",
-      { class: "lede" },
-      "Start a saved task, watch the job, and browse Drive. Nothing on this page posts, emails, or invoices by itself."
-    )
-  );
-  const notice = h("div", { id: "notice" });
-  main.append(notice, checklist(desk), h("h2", { class: "section" }, "Agents"));
-  const grid = h("div", { class: "agent-grid" });
-  for (const agent of desk.agents) grid.append(agentCard(agent));
-  main.append(grid, h("h2", { class: "section" }, "Jobs"));
-  const jobs = h("div", { id: "jobs" });
-  const refresh = h("button", { class: "button button-quiet", type: "button" }, "Reconcile from the sheet");
-  refresh.addEventListener("click", () => {
-    void refreshAll(notice, jobs);
-  });
-  main.append(refresh, jobs, statusLegend(desk));
-  void fillJobs(jobs, null);
+async function paintOverview(main) {
+  const result = await loadJobs();
+  if (!main.isConnected || main.dataset.paint !== "overview" || !desk) return;
+  const jobs = result.ok && result.data ? result.data.jobs : [];
+  const jobError = result.ok ? null : result.failure?.detail ?? "Jobs could not be loaded.";
+  const notice = h("div", { id: "notice", "aria-live": "polite" });
+  main.replaceChildren(hero(jobs), questBlock(desk), notice, needsStrip(jobs), crewGrid(jobs), recentBlock(jobs, jobError, notice));
 }
-function checklist(data) {
-  const rows = [
-    ["Sign-in", true, data.auth === "access" ? "Cloudflare Access is checking this browser." : "Local dev sign-in is on. Production should use Access."],
-    ["Encryption", data.setup.encryption, "Refresh tokens stay encrypted with TOKEN_ENCRYPTION_KEY."],
-    ["Google", data.setup.google === "connected", data.setup.googleEmail ? `Connected as ${data.setup.googleEmail}.` : "Connect Google from Drive. This desk cannot reuse a Grok Bot connection."],
-    ["Sheet reconcile", data.setup.scopes.sheetsReadonly, "Reading Automate Jobs needs spreadsheets.readonly."],
-    ["Folder browse", data.setup.scopes.driveReadonly || data.setup.scopes.drive, "Listing existing folders needs drive.readonly. drive.file plus Picker is the narrower upload path."],
-    ["Callback URL", data.setup.publicBaseUrl, "PUBLIC_BASE_URL lets an agent POST a result. The sheet still works without it."],
-    ["Slack sheet", data.setup.slackSheet, "SLACK_LOG_SHEET_ID is separate from the brand tracker."]
-  ];
-  const list = h("ul", { class: "check" });
-  for (const [label, ready, detail] of rows) {
-    list.append(
-      h(
-        "li",
-        {},
-        h("span", { class: ready ? "chip chip-ready" : "chip chip-need" }, ready ? "Ready" : "Setup needed"),
-        h("strong", {}, label),
-        h("span", { class: "muted" }, detail)
-      )
-    );
+function hero(jobs) {
+  const done = jobs.filter((job) => job.status === "completed");
+  const progress = levelProgress(done.length);
+  const streak = completionStreak(done.map((job) => job.updatedAt), Date.now());
+  const stats = h(
+    "div",
+    { class: "hero-stats" },
+    h("p", { class: "kicker" }, "Crew"),
+    h("h1", { class: "title" }, `Level ${progress.level}`),
+    h("p", { class: "statline" }, `${done.length} done \xB7 ${streak}-day streak`),
+    meter(progress.current, progress.goal, `${progress.current} of ${progress.goal} toward the next level`)
+  );
+  return h("header", { class: "hero" }, stats);
+}
+function questBlock(data) {
+  const items = questItems(data);
+  const ready = items.filter((item) => item.ready).length;
+  const block = h("section", { class: "quest" }, h("div", { class: "quest-top" }, h("h2", {}, "Setup quest"), h("span", {}, `${ready}/${items.length}`)), meter(ready, items.length, `${ready} of ${items.length} setup steps ready`));
+  const list = h("ul", { class: "quest-list" });
+  for (const item of items) {
+    const row = h("li", {}, chip(item.ready ? "green" : "amber", item.ready ? "Ready" : "Setup"), h("span", {}, item.label));
+    row.append(more(item.detail));
+    list.append(row);
   }
-  return h("section", { class: "panel" }, h("h2", { class: "section" }, "Setup"), list);
+  block.append(fold("Quest details", list, h("p", {}, "Steps and variable names are in the setup guide.")));
+  return block;
 }
-function statusLegend(data) {
-  return h(
-    "section",
-    { class: "panel" },
-    h("h2", { class: "section" }, "How a job moves"),
-    h("p", {}, "Requested means the webhook returned 200. That accepts the run. It does not mean the task finished."),
-    h("p", {}, "Running, needs input, completed, and failed are written by the agent to the sheet or the callback."),
-    h("p", {}, "Unknown means the trail went cold, or a posting job came back without a live TikTok URL."),
-    h(
-      "p",
-      {},
-      `A request with no start after ${data.stale.requestedMinutes} minutes becomes unknown. A running job is marked stale after ${data.stale.runningMinutes} minutes and stays running.`
-    ),
-    h(
-      "p",
-      {},
-      "A button here does not lock a scheduled routine. Those routines have to read the same job id and skip work that is already underway."
-    )
-  );
+function needsStrip(jobs) {
+  const strip = h("section", { class: "needs", "aria-label": "Needs you" });
+  const urgent = jobs.filter((job) => attentionRank(job.status, job.stale) !== null).sort((a, b) => (attentionRank(a.status, a.stale) ?? 9) - (attentionRank(b.status, b.stale) ?? 9));
+  const questOpen = desk ? questItems(desk).some((item) => !item.ready) : false;
+  if (urgent.length === 0 && !questOpen) {
+    strip.append(h("p", { class: "need clear" }, chip("green", "Clear"), h("span", {}, "Nothing needs you")));
+    return strip;
+  }
+  strip.append(h("h2", { class: "section" }, "Needs you"));
+  const list = h("ul", { class: "need-list" });
+  for (const job of urgent) list.append(needJob(job));
+  if (questOpen) {
+    list.append(h("li", { class: "need" }, chip("amber", "Setup"), h("span", {}, "Setup quest is open")));
+  }
+  strip.append(list);
+  return strip;
 }
-function agentCard(agent) {
-  const webhook = desk?.setup.webhooks[agent.slug] ?? "setup_needed";
-  const card = h(
-    "a",
-    { class: "agent-card", href: agentPath(agent.slug) },
-    h("span", { class: "stamp", "data-agent": agent.slug }, agent.stamp),
-    h("span", { class: "agent-name" }, agent.name),
-    h("span", { class: "muted" }, agent.role),
-    h("span", { class: webhook === "ready" ? "chip chip-ready" : "chip chip-need" }, webhook === "ready" ? "Webhook ready" : "Setup needed")
-  );
+function needJob(job) {
+  const tone = jobTone(job.status, job.stale);
+  const row = h("li", { class: "need" }, chip(tone, statusLabel(job.status, job.stale)), h("span", {}, jobSummary(job.task, job.taskLabel, job.status, job.stale)));
+  row.append(jobMore(job));
+  return row;
+}
+function crewGrid(jobs) {
+  const grid = h("div", { class: "agent-grid" });
+  for (const agent of desk?.agents ?? []) grid.append(agentCard(agent, jobs.filter((job) => job.agent === agent.slug)));
+  return grid;
+}
+function agentCard(agent, jobs) {
+  const done = jobs.filter((job) => job.status === "completed").length;
+  const progress = levelProgress(done);
+  const card = h("a", { class: "agent-card", href: agentPath(agent.slug), "data-agent": agent.slug });
+  card.append(medallion(agent.slug), h("span", { class: "agent-name" }, agent.name), h("span", { class: "role" }, shortRole(agent)), h("span", { class: "level" }, `Lv ${progress.level} \xB7 ${done} done`));
+  card.append(meter(progress.current, progress.goal, `${agent.name} level progress`));
+  const flag = cardFlag(agent, jobs);
+  if (flag) card.append(flag);
   card.addEventListener("click", (event) => go(event, agentPath(agent.slug)));
   return card;
 }
-function renderAgent(main, agent) {
-  const webhook = desk?.setup.webhooks[agent.slug] ?? "setup_needed";
-  main.append(
-    h("p", { class: "kicker" }, agent.group === "brand" ? "Brand desk" : "Original desk"),
-    h("h1", { class: "title" }, agent.name),
-    h("p", { class: "lede" }, agent.summary),
-    h("div", { class: "banner" }, agent.boundary)
-  );
-  if (agent.slug === "slack") {
-    main.append(
-      h(
-        "p",
-        { class: "muted" },
-        "Slack is the name of this poster. It is not the Slack app. Its folders are Postr (Normal), Ready to Post, and Posted."
-      )
-    );
+function cardFlag(agent, jobs) {
+  const urgent = jobs.filter((job) => attentionRank(job.status, job.stale) !== null).sort((a, b) => (attentionRank(a.status, a.stale) ?? 9) - (attentionRank(b.status, b.stale) ?? 9))[0];
+  if (urgent) return chip(jobTone(urgent.status, urgent.stale), statusLabel(urgent.status, urgent.stale));
+  if ((desk?.setup.webhooks[agent.slug] ?? "setup_needed") !== "ready") return chip("amber", "Setup");
+  return null;
+}
+function recentBlock(jobs, jobError, notice) {
+  const block = h("section", { class: "recent" }, h("div", { class: "quest-top" }, h("h2", {}, "Recent"), reconcileButton(notice)));
+  block.append(notice);
+  if (jobError) block.append(h("p", {}, jobError));
+  else if (jobs.length === 0) block.append(h("p", { class: "empty" }, "No jobs yet."));
+  else {
+    const list = h("ul", { class: "need-list" });
+    for (const job of jobs.slice(0, 4)) list.append(needJob(job));
+    block.append(list);
   }
-  if (webhook !== "ready") {
-    main.append(
-      h(
-        "div",
-        { class: "banner" },
-        webhook === "rejected_host" ? "Setup needed. The webhook host is not allowlisted, so the buttons stay off." : "Setup needed. Add this agent's webhook URL and key on the server before a task can start."
-      )
-    );
-  }
+  return block;
+}
+function reconcileButton(notice) {
+  const button = h("button", { class: "text-button", type: "button" }, "Reconcile");
+  button.addEventListener("click", () => {
+    pop(button);
+    void refreshAll(notice);
+  });
+  return button;
+}
+async function paintAgent(main, agent) {
+  const result = await loadJobs(agent.slug);
+  if (!main.isConnected || main.dataset.paint !== agent.slug || !desk) return;
+  const jobs = result.ok && result.data ? result.data.jobs : [];
+  const jobError = result.ok ? null : result.failure?.detail ?? "Jobs could not be loaded.";
+  const webhook = desk.setup.webhooks[agent.slug] ?? "setup_needed";
   const notice = h("div", { id: "notice", "aria-live": "polite" });
+  const done = jobs.filter((job) => job.status === "completed");
+  const progress = levelProgress(done.length);
+  const head = h(
+    "header",
+    { class: "hero agent-hero", "data-agent": agent.slug },
+    medallion(agent.slug),
+    h(
+      "div",
+      {},
+      h("p", { class: "kicker" }, shortRole(agent)),
+      h("h1", { class: "title" }, agent.name),
+      h("p", { class: "statline" }, `Lv ${progress.level} \xB7 ${done.length} done \xB7 ${completionStreak(done.map((job) => job.updatedAt), Date.now())}-day streak`),
+      meter(progress.current, progress.goal, `${agent.name} level progress`)
+    )
+  );
+  if (webhook !== "ready") head.append(chip("amber", "Setup"));
   const tasks = h("div", { class: "task-list" });
   for (const task of agent.tasks) {
     const button = h(
       "button",
-      { class: "task", type: "button" },
-      h("strong", {}, task.label),
-      h("small", {}, task.detail)
+      { class: "start", type: "button" },
+      h("span", { class: "start-kicker" }, "Start"),
+      h("span", { class: "start-name" }, shortTask(task.key, task.label))
     );
     button.disabled = webhook !== "ready";
     button.addEventListener("click", () => {
+      pop(button);
       void runTask(agent, task.key, button, notice);
     });
-    tasks.append(button);
+    tasks.append(h("div", { class: "task-row" }, button, more(task.detail)));
   }
-  const jobs = h("div", { id: "jobs" });
-  main.append(h("h2", { class: "section" }, "Tasks"), notice, tasks, h("h2", { class: "section" }, "Jobs"), jobs);
-  void fillJobs(jobs, agent.slug);
+  const rules = fold(
+    "Rules",
+    h("p", {}, agent.boundary),
+    agent.slug === "slack" ? h("p", {}, "Slack is this poster's name, not the Slack app.") : h("p", {}, "A 200 from the webhook means accepted, not finished."),
+    h("p", {}, webhook === "rejected_host" ? "The webhook host is not allowlisted, so Start stays off." : "Start stays off until this agent's webhook is configured."),
+    h("p", {}, "Full prompts are in the setup guide. A button here does not lock a scheduled routine.")
+  );
+  const jobsBlock = h("section", { class: "recent" }, h("h2", {}, "Jobs"), notice);
+  if (jobError) jobsBlock.append(h("p", {}, jobError));
+  else if (jobs.length === 0) jobsBlock.append(h("p", { class: "empty" }, "No jobs yet."));
+  else {
+    const list = h("ul", { class: "need-list", id: "jobs" });
+    for (const job of jobs) list.append(needJob(job));
+    jobsBlock.append(list);
+  }
+  main.replaceChildren(head, tasks, rules, jobsBlock);
 }
 async function runTask(agent, task, button, notice) {
   button.disabled = true;
@@ -286,96 +408,181 @@ async function runTask(agent, task, button, notice) {
   button.disabled = (desk?.setup.webhooks[agent.slug] ?? "setup_needed") !== "ready";
   notice.replaceChildren();
   if (!result.ok || !result.data) {
-    notice.append(h("div", { class: "banner" }, result.failure?.detail ?? "The task did not start."));
+    notice.append(chip("red", "Failed"), h("span", {}, result.failure?.detail ?? "The task did not start."));
     return;
   }
   const job = result.data.job;
-  if (job.delivery === "accepted") {
-    notice.append(h("div", { class: "banner" }, "Accepted, not completed. HTTP 200 only means the run started."));
-  } else if (job.error) {
-    notice.append(h("div", { class: "banner" }, job.error));
-  }
-  const jobs = document.querySelector("#jobs");
-  if (jobs) await fillJobs(jobs, agent.slug);
+  const main = document.querySelector("#main");
+  if (main instanceof HTMLElement && main.dataset.paint === agent.slug) await paintAgent(main, agent);
+  const live = document.querySelector("#notice");
+  live?.append(chip(jobTone(job.status, job.stale), statusLabel(job.status, job.stale)), h("span", {}, jobSummary(job.task, job.taskLabel, job.status, job.stale)));
 }
-async function fillJobs(container, agent) {
-  const result = await loadJobs(agent ?? void 0);
-  container.replaceChildren();
+async function refreshAll(notice) {
+  const result = await reconcileAll();
+  notice.replaceChildren();
   if (!result.ok || !result.data) {
-    container.append(h("p", {}, result.failure?.detail ?? "Jobs could not be loaded."));
+    notice.append(chip("red", "Failed"), h("span", {}, result.failure?.detail ?? "Reconcile did not run."));
     return;
   }
-  if (result.data.jobs.length === 0) {
-    container.append(h("p", { class: "muted" }, "No jobs yet. A disabled button is setup, not a finished run."));
-    return;
-  }
-  const list = h("ul", { class: "jobs" });
-  for (const job of result.data.jobs) list.append(jobRow(job));
-  container.append(list);
+  const pending = result.data.sheets.find((sheet) => sheet.sheet === "setup_needed" || sheet.sheet === "error");
+  if (pending) notice.append(chip("amber", "Setup"), h("span", {}, pending.detail ?? "Sheet reconcile needs setup."));
+  const main = document.querySelector("#main");
+  if (main instanceof HTMLElement && main.dataset.paint === "overview") await paintOverview(main);
 }
-function jobRow(job) {
-  const pillClass = `status status-${job.status === "needs input" ? "needs" : job.status}`;
-  const top = h(
-    "div",
-    { class: "job-top" },
-    h("strong", {}, job.taskLabel),
-    h("span", { class: pillClass }, job.status)
-  );
-  if (job.stale) top.append(h("span", { class: "status status-stale" }, "Stale"));
-  const row = h("li", { class: "job" }, top, h("p", { class: "muted" }, `${job.agent} \xB7 ${when(job.updatedAt)}`));
-  if (job.delivery === "accepted" && job.status === "requested") {
-    row.append(h("p", {}, "Accepted, not completed."));
+function jobMore(job) {
+  const bits = [h("p", {}, `${job.agent} \xB7 ${when(job.updatedAt)}`)];
+  if (job.delivery === "accepted" && job.status === "requested") bits.push(h("p", {}, "Accepted, not completed."));
+  if (job.error) bits.push(h("p", {}, job.error));
+  if (job.note) bits.push(h("p", {}, job.note));
+  if (job.outputUrl?.startsWith("https://")) {
+    bits.push(h("a", { href: job.outputUrl, target: "_blank", rel: "noopener noreferrer" }, "Open output"));
   }
-  if (job.error) row.append(h("p", {}, job.error));
-  if (job.note) row.append(h("p", {}, job.note));
-  if (job.outputUrl && job.outputUrl.startsWith("https://")) {
-    const link = h("a", { href: job.outputUrl, target: "_blank", rel: "noopener noreferrer" }, "Open output");
-    row.append(link);
-  }
-  if (job.runUuid) row.append(h("p", { class: "muted" }, `Run ${job.runUuid}`));
+  if (job.runUuid) bits.push(h("p", {}, `Run ${job.runUuid}`));
   const actions = h("div", { class: "row-actions" });
-  const refresh = h("button", { class: "button button-quiet", type: "button" }, "Reconcile");
+  const refresh = h("button", { class: "text-button", type: "button" }, "Reconcile");
   refresh.addEventListener("click", () => {
     void (async () => {
       const result = await reconcileJob(job.id);
-      const host = row.parentElement?.parentElement;
-      if (host) await fillJobs(host, job.agent === window.location.pathname.split("/").pop() ? job.agent : null);
-      if (!result.ok) row.append(h("p", {}, result.failure?.detail ?? "Reconcile failed."));
-      else if (result.data?.detail) row.append(h("p", { class: "muted" }, result.data.detail));
+      const main = document.querySelector("#main");
+      if (!(main instanceof HTMLElement)) return;
+      if (!result.ok) {
+        const note = document.querySelector("#notice");
+        note?.append(chip("red", "Failed"), h("span", {}, result.failure?.detail ?? "Reconcile failed."));
+      } else if (main.dataset.paint === "overview") await paintOverview(main);
+      else if (desk) {
+        const agent = desk.agents.find((item) => item.slug === main.dataset.paint);
+        if (agent) await paintAgent(main, agent);
+      }
     })();
   });
   actions.append(refresh);
   if (job.status !== "completed") {
-    const manual = h("button", { class: "button button-quiet", type: "button" }, "Mark unknown");
+    const manual = h("button", { class: "text-button", type: "button" }, "Mark unknown");
     manual.addEventListener("click", () => {
-      void markUnknown(job.id, row);
+      void (async () => {
+        const result = await reconcileJob(job.id, { action: "set", status: "unknown", note: "Marked unknown by the owner." });
+        const main = document.querySelector("#main");
+        if (!(main instanceof HTMLElement)) return;
+        if (!result.ok) return;
+        if (main.dataset.paint === "overview") await paintOverview(main);
+        else if (desk) {
+          const agent = desk.agents.find((item) => item.slug === main.dataset.paint);
+          if (agent) await paintAgent(main, agent);
+        }
+      })();
     });
     actions.append(manual);
   }
-  row.append(actions);
-  return row;
+  bits.push(actions);
+  return fold("Details", ...bits);
 }
-async function markUnknown(id, row) {
-  const result = await reconcileJob(id, { action: "set", status: "unknown", note: "Marked unknown by the owner." });
-  if (!result.ok) {
-    row.append(h("p", {}, result.failure?.detail ?? "That status was not saved."));
-    return;
+function questItems(data) {
+  const slackFolders = data.setup.slackFolders.postr && data.setup.slackFolders.ready && data.setup.slackFolders.posted;
+  const items = [
+    { label: "Sign-in", ready: true, detail: data.auth === "access" ? "Cloudflare Access is checking this browser." : "Local sign-in is on. Production uses Access." },
+    { label: "Encryption", ready: data.setup.encryption, detail: "TOKEN_ENCRYPTION_KEY encrypts Google tokens on the server." },
+    { label: "Google", ready: data.setup.google === "connected", detail: data.setup.googleEmail ? `Connected as ${data.setup.googleEmail}.` : "Connect Google from Drive. This desk cannot reuse a Grok Bot connection." },
+    { label: "Sheet read", ready: data.setup.scopes.sheetsReadonly, detail: "spreadsheets.readonly reads the Automate Jobs tab." },
+    { label: "Folder browse", ready: data.setup.scopes.driveReadonly || data.setup.scopes.drive, detail: "drive.readonly lists existing folders. drive.file plus Picker is the narrower upload path." },
+    { label: "Callback", ready: data.setup.publicBaseUrl, detail: "PUBLIC_BASE_URL lets an agent report back. The sheet still works without it." },
+    { label: "Slack sheet", ready: data.setup.slackSheet, detail: "SLACK_LOG_SHEET_ID is the Postr Log, separate from the brand tracker." },
+    { label: "Slack folders", ready: slackFolders, detail: "Postr, Ready to Post, and Posted each need a folder id." }
+  ];
+  for (const agent of data.agents) {
+    const state = data.setup.webhooks[agent.slug] ?? "setup_needed";
+    items.push({
+      label: `${agent.name} webhook`,
+      ready: state === "ready",
+      detail: state === "rejected_host" ? "That webhook host is not allowlisted." : "Set the webhook URL and key named in the setup guide."
+    });
   }
-  const host = row.parentElement?.parentElement;
-  if (host) await fillJobs(host, null);
+  return items;
 }
-async function refreshAll(notice, jobs) {
-  const result = await reconcileAll();
-  notice.replaceChildren();
-  if (!result.ok || !result.data) {
-    notice.append(h("div", { class: "banner" }, result.failure?.detail ?? "Reconcile did not run."));
-    return;
+function shortRole(agent) {
+  const roles = {
+    fling: "Brand email",
+    cling: "Scripts",
+    sling: "Brand posts",
+    bling: "Invoices",
+    pling: "Analytics",
+    slack: "Original posts"
+  };
+  return roles[agent.slug] ?? agent.role;
+}
+function meter(current, goal, label) {
+  const safeGoal = goal > 0 ? goal : 1;
+  const width = Math.max(0, Math.min(100, Math.round(current / safeGoal * 100)));
+  const bar = h("div", { class: "meter", role: "meter", "aria-label": label, "aria-valuemin": "0", "aria-valuemax": String(safeGoal), "aria-valuenow": String(current) });
+  bar.append(h("span", { class: fillWidth(width) }));
+  return bar;
+}
+function chip(tone, label) {
+  const node = h("span", { class: `chip tone-${tone}` });
+  node.append(icon(tone), document.createTextNode(label));
+  return node;
+}
+function icon(tone) {
+  const paths = {
+    red: "M12 2 1 21h22L12 2zm1 14h-2v2h2zm0-8h-2v6h2z",
+    amber: "M12 2a10 10 0 100 20 10 10 0 000-20zm1 11H7v-2h4V6h2z",
+    blue: "M8 5v14l11-7z",
+    green: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"
+  };
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("ico");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", paths[tone]);
+  path.setAttribute("fill", "currentColor");
+  svg.append(path);
+  return svg;
+}
+function medallion(slug) {
+  const node = h("span", { class: "medallion", "data-agent": slug });
+  node.append(avatar(slug));
+  return node;
+}
+function avatar(slug) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 64 64");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("avatar");
+  const marks = {
+    fling: "M40 16h12v10H40z M42 18h8v6h-8z",
+    cling: "M44 14l4 2-16 22-4-2z",
+    sling: "M42 18l12 8-12 8z",
+    bling: "M46 16a6 6 0 110 12 6 6 0 010-12z",
+    pling: "M40 28h4v8h-4z M46 22h4v14h-4z M52 16h4v20h-4z",
+    slack: "M48 14l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"
+  };
+  for (const d of ["M32 14a10 10 0 110 20 10 10 0 010-20z", "M16 54c2-12 10-16 16-16s14 4 16 16", marks[slug] ?? ""]) {
+    if (!d) continue;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "currentColor");
+    svg.append(path);
   }
-  const pending = result.data.sheets.filter((sheet) => sheet.sheet === "setup_needed" || sheet.sheet === "error");
-  if (pending.length > 0) {
-    notice.append(h("div", { class: "banner" }, pending.map((sheet) => sheet.detail ?? `${sheet.agentGroup}: setup needed`).join(" ")));
-  }
-  await fillJobs(jobs, null);
+  return svg;
+}
+function more(text) {
+  return fold("Details", h("p", {}, text));
+}
+function fold(summary, ...nodes) {
+  const node = document.createElement("details");
+  const label = document.createElement("summary");
+  label.textContent = summary;
+  node.append(label, ...nodes);
+  return node;
+}
+function fillWidth(percent) {
+  const step = Math.max(0, Math.min(20, Math.round(percent / 5)));
+  return `fill-${step * 5}`;
+}
+function pop(button) {
+  button.classList.remove("pop");
+  void button.offsetWidth;
+  button.classList.add("pop");
 }
 function when(iso) {
   const date = new Date(iso);
@@ -386,39 +593,32 @@ function renderDrive(main) {
   if (!desk) return;
   const params = new URLSearchParams(window.location.search);
   const googleFlag = params.get("google");
-  main.append(h("p", { class: "kicker" }, "Drive"), h("h1", { class: "title" }, "Folders and photos"), h("p", { class: "lede" }, "Browse the allowlisted folders, or drop photos into one of them. Uploads are not TikTok posts."));
-  if (googleFlag === "connected") main.append(h("div", { class: "banner" }, "Google connected."));
+  main.append(h("p", { class: "kicker" }, "Drive"), h("h1", { class: "title" }, "Photos"));
+  if (googleFlag === "connected") main.append(h("p", { class: "statline" }, "Google connected."));
   if (googleFlag === "denied" || googleFlag === "error" || googleFlag === "state") {
-    main.append(h("div", { class: "banner" }, "Google did not connect. No upload was sent."));
-  }
-  if (!desk.setup.scopes.driveReadonly && !desk.setup.scopes.drive) {
-    main.append(
-      h(
-        "div",
-        { class: "banner" },
-        "Browsing Brands and Ready to Post needs drive.readonly. drive.file can still upload into a folder you created with this app or opened with Google Picker. The setup guide records that trade-off."
-      )
-    );
+    main.append(h("p", { class: "need" }, chip("red", "Failed"), h("span", {}, "Google did not connect.")));
   }
   const googleRow = h("div", { class: "row-actions" });
   if (desk.setup.google === "connected") {
-    googleRow.append(h("span", { class: "chip chip-ready" }, desk.setup.googleEmail ?? "Connected"));
-    const disconnect = h("button", { class: "button button-quiet", type: "button" }, "Disconnect Google");
+    googleRow.append(chip("green", "Connected"));
+    const disconnect = h("button", { class: "text-button", type: "button" }, "Disconnect");
     disconnect.addEventListener("click", () => {
       void disconnectGoogle();
     });
     googleRow.append(disconnect);
   } else if (desk.setup.googleOauth) {
-    const connect = h("button", { class: "button", type: "button" }, "Connect Google");
+    const connect = h("button", { class: "start", type: "button" }, "Connect Google");
     connect.addEventListener("click", () => {
+      pop(connect);
       void connectGoogle();
     });
     googleRow.append(connect);
   } else {
-    googleRow.append(h("span", { class: "chip chip-need" }, "Setup needed"));
+    googleRow.append(chip("amber", "Setup"));
   }
+  googleRow.append(fold("Browse note", h("p", {}, "Listing existing folders needs drive.readonly. drive.file can upload after you open a folder with Picker. Uploads are not posts.")));
   if (desk.picker && desk.setup.google === "connected") {
-    const pick = h("button", { class: "button button-quiet", type: "button" }, "Open a folder with Picker");
+    const pick = h("button", { class: "text-button", type: "button" }, "Open with Picker");
     pick.addEventListener("click", () => {
       void openPicker();
     });
@@ -430,7 +630,7 @@ function renderDrive(main) {
   side.append(h("h2", { class: "section" }, "Upload destination"));
   const choices = h("div", { class: "dest" });
   for (const folder of desk.folders) {
-    const button = h("button", { class: "task", type: "button" }, h("strong", {}, folder.label), h("small", {}, folder.configured ? folder.group : "Setup needed"));
+    const button = h("button", { class: "start", type: "button" }, h("span", { class: "start-name" }, folder.label), h("span", { class: "start-kicker" }, folder.configured ? "Choose" : "Setup"));
     button.disabled = !folder.configured || desk.setup.google !== "connected";
     button.addEventListener("click", () => {
       selectedFolderKey = folder.key;
@@ -662,7 +862,7 @@ function renderUploadQueue(queue) {
   queue.replaceChildren();
   for (const row of uploads) {
     const item = h("li", { class: "file-row" }, h("strong", {}, row.name), h("span", {}, statusLine(row)));
-    const bar = h("div", { class: "bar" }, h("span", { style: `width:${Math.round(row.progress)}%` }));
+    const bar = h("div", { class: "bar" }, h("span", { class: fillWidth(row.progress) }));
     item.append(bar);
     if (row.link) item.append(h("a", { href: row.link, target: "_blank", rel: "noopener noreferrer" }, "Open in Drive"));
     if (row.status === "error") {
