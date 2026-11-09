@@ -1,4 +1,5 @@
 import { AGENTS, DRIVE_CHUNK_MULTIPLE, IMAGE_MIME_TYPES, MAX_UPLOAD_BYTES, UPLOAD_CHUNK_BYTES } from "../shared/catalog";
+import { API_BASE, DESK_BASE } from "../shared/paths";
 import { isDriveId } from "../shared/urls";
 import {
   assertCsrf,
@@ -112,17 +113,17 @@ async function dispatch(request: Request, env: Env, fetchImpl: typeof fetch, now
   if (request.method === "OPTIONS") return new Response(null, { status: 405 });
   if (PUBLIC_PATHS.has(path)) return servePublic(request, env, path);
 
-  const report = path.match(/^\/api\/automate\/jobs\/([0-9a-f-]{16,80})\/report$/);
+  const report = path.match(new RegExp(`^${API_BASE}/jobs/([0-9a-f-]{16,80})/report$`));
   if (report && request.method === "POST") {
     return handleReport(request, env, report[1] ?? "", nowMs);
   }
   if (path === "/favicon.ico" && request.method === "GET") return servePublic(request, env, "/favicon.svg");
-  if (!path.startsWith("/automate") && !path.startsWith("/api/automate")) {
+  if (!path.startsWith(DESK_BASE)) {
     return plainAuthPage("Not found", "That page is not on this site.", 404);
   }
-  if (path === "/automate/login" && request.method === "GET") return loginPage(request, env, null);
-  if (path === "/api/automate/session" && request.method === "POST") return login(request, env, nowMs);
-  if (path === "/api/automate/session" && request.method === "DELETE") {
+  if (path === `${DESK_BASE}/login` && request.method === "GET") return loginPage(request, env, null);
+  if (path === `${API_BASE}/session` && request.method === "POST") return login(request, env, nowMs);
+  if (path === `${API_BASE}/session` && request.method === "DELETE") {
     const identity = await requireIdentity(request, env, fetchImpl, nowMs);
     assertMutation(request);
     return withCookies(json({ ok: true, auth: identity.mode }), [clearSessionCookie(request)]);
@@ -132,15 +133,15 @@ async function dispatch(request: Request, env: Env, fetchImpl: typeof fetch, now
   const csrf = ensureCsrf(request);
   if (request.method !== "GET" && request.method !== "HEAD") assertMutation(request);
 
-  if (path === "/api/automate/bootstrap" && request.method === "GET") {
+  if (path === `${API_BASE}/bootstrap` && request.method === "GET") {
     return withCookies(json(await bootstrap(env, identity, nowMs)), csrfSet(request, csrf));
   }
-  if (path === "/api/automate/jobs" && request.method === "GET") {
+  if (path === `${API_BASE}/jobs` && request.method === "GET") {
     const agent = url.searchParams.get("agent");
     const jobs = await jobsForApi(d1sql(env.DB), agent, nowMs, thresholdsFor(env));
     return json({ jobs });
   }
-  if (path === "/api/automate/jobs" && request.method === "POST") {
+  if (path === `${API_BASE}/jobs` && request.method === "POST") {
     const body = asRecord(await readJson(request));
     const result = await startJob({
       sql: d1sql(env.DB),
@@ -153,11 +154,11 @@ async function dispatch(request: Request, env: Env, fetchImpl: typeof fetch, now
     });
     return json(result, result.created ? 201 : 200);
   }
-  if (path === "/api/automate/jobs/reconcile" && request.method === "POST") {
+  if (path === `${API_BASE}/jobs/reconcile` && request.method === "POST") {
     const result = await reconcileOpenJobs({ sql: d1sql(env.DB), env, fetchImpl, nowMs });
     return json(result);
   }
-  const jobAction = path.match(/^\/api\/automate\/jobs\/([0-9a-f-]{16,80})(?:\/(reconcile))?$/);
+  const jobAction = path.match(new RegExp(`^${API_BASE}/jobs/([0-9a-f-]{16,80})(?:/(reconcile))?$`));
   if (jobAction && request.method === "GET" && !jobAction[2]) {
     return json({ job: await jobForApi(d1sql(env.DB), jobAction[1] ?? "", nowMs, thresholdsFor(env)) });
   }
@@ -172,24 +173,24 @@ async function dispatch(request: Request, env: Env, fetchImpl: typeof fetch, now
     });
     return json(result);
   }
-  if (path === "/api/automate/google/start" && request.method === "POST") {
+  if (path === `${API_BASE}/google/start` && request.method === "POST") {
     return json(await beginGoogle(env, nowMs));
   }
-  if (path === "/api/automate/google/callback" && request.method === "GET") {
+  if (path === `${API_BASE}/google/callback` && request.method === "GET") {
     return finishGoogle(request, env, fetchImpl, nowMs);
   }
-  if (path === "/api/automate/google/disconnect" && request.method === "POST") {
+  if (path === `${API_BASE}/google/disconnect` && request.method === "POST") {
     await deleteCredential(d1sql(env.DB));
     return json({ ok: true });
   }
-  if (path === "/api/automate/google/picker-token" && request.method === "GET") {
+  if (path === `${API_BASE}/google/picker-token` && request.method === "GET") {
     const token = await requireAccessToken(d1sql(env.DB), env, fetchImpl, nowMs);
     return json({ accessToken: token.accessToken });
   }
-  if (path === "/api/automate/drive/list" && request.method === "GET") {
+  if (path === `${API_BASE}/drive/list` && request.method === "GET") {
     return json(await listFolder(env, fetchImpl, url, nowMs));
   }
-  if (path === "/api/automate/drive/open" && request.method === "POST") {
+  if (path === `${API_BASE}/drive/open` && request.method === "POST") {
     const body = asRecord(await readJson(request));
     const folderId = String(body?.folderId ?? "");
     if (!isDriveId(folderId)) throw new HttpError(400, "bad_folder");
@@ -198,14 +199,14 @@ async function dispatch(request: Request, env: Env, fetchImpl: typeof fetch, now
     const known = configuredFolders(env).find((folder) => folder.key === allowed.key);
     return json({ folderId: allowed.id, folderKey: allowed.key, label: known?.label ?? "Folder", upload: true });
   }
-  const media = path.match(/^\/api\/automate\/drive\/files\/([a-zA-Z0-9_-]+)\/(thumb|preview)$/);
+  const media = path.match(new RegExp(`^${API_BASE}/drive/files/([a-zA-Z0-9_-]+)/(thumb|preview)$`));
   if (media && request.method === "GET") {
     return driveMedia(env, fetchImpl, media[1] ?? "", media[2] === "preview", nowMs);
   }
-  if (path === "/api/automate/drive/uploads" && request.method === "POST") {
+  if (path === `${API_BASE}/drive/uploads` && request.method === "POST") {
     return startUpload(request, env, fetchImpl, nowMs);
   }
-  const upload = path.match(/^\/api\/automate\/drive\/uploads\/([0-9a-f-]{16,80})(\/retry)?$/);
+  const upload = path.match(new RegExp(`^${API_BASE}/drive/uploads/([0-9a-f-]{16,80})(/retry)?$`));
   if (upload && request.method === "PUT" && !upload[2]) {
     return receiveChunk(request, env, fetchImpl, upload[1] ?? "", nowMs);
   }
@@ -213,11 +214,11 @@ async function dispatch(request: Request, env: Env, fetchImpl: typeof fetch, now
     return retryUpload(env, fetchImpl, upload[1] ?? "", nowMs);
   }
 
-  if (request.method === "GET" && (path === "/automate/app.js" || path === "/automate/app.css" || path === "/automate/index.html")) {
+  if (request.method === "GET" && (path === `${DESK_BASE}/app.js` || path === `${DESK_BASE}/app.css` || path === `${DESK_BASE}/index.html`)) {
     return withCookies(await serveDeskAsset(request, env, path), csrfSet(request, csrf));
   }
   if (request.method === "GET" && isDeskPage(path)) {
-    return withCookies(await serveDeskAsset(request, env, "/automate/index.html"), csrfSet(request, csrf));
+    return withCookies(await serveDeskAsset(request, env, `${DESK_BASE}/index.html`), csrfSet(request, csrf));
   }
   if (wantsHtml(request)) return plainAuthPage("Not found", "That page is not on this site.", 404);
   return json({ error: "not_found" }, 404);
@@ -229,8 +230,8 @@ function normalizePath(pathname: string): string {
 }
 
 function isDeskPage(path: string): boolean {
-  if (path === "/automate" || path === "/automate/drive") return true;
-  const match = path.match(/^\/automate\/agents\/([a-z]+)$/);
+  if (path === DESK_BASE || path === `${DESK_BASE}/drive`) return true;
+  const match = path.match(new RegExp(`^${DESK_BASE}/agents/([a-z]+)$`));
   if (!match) return false;
   return AGENTS.some((agent) => agent.slug === match[1]);
 }
@@ -246,9 +247,9 @@ async function gate(
     return await requireIdentity(request, env, fetchImpl, nowMs);
   } catch (error) {
     if (!(error instanceof HttpError)) throw error;
-    if (request.method === "GET" && wantsHtml(request) && path.startsWith("/automate")) {
+    if (request.method === "GET" && wantsHtml(request) && path.startsWith(DESK_BASE)) {
       if (error.status === 401 && devAuthEnabled(env, request)) {
-        throw new Redirect("/automate/login");
+        throw new Redirect(`${DESK_BASE}/login`);
       }
       const page = plainAuthPage(
         error.status === 503 ? "Setup needed" : "Sign in required",
@@ -283,6 +284,9 @@ async function handleReport(request: Request, env: Env, id: string, nowMs: numbe
 
 function loginPage(request: Request, env: Env, message: string | null): Response {
   const mode = authConfigured(env, request);
+  if (mode === "public") {
+    return redirect(DESK_BASE);
+  }
   if (mode === "access") {
     return plainAuthPage(
       "Use Cloudflare Access",
@@ -314,7 +318,7 @@ function loginPage(request: Request, env: Env, message: string | null): Response
     <h1 style="font-weight:500;font-size:2.6rem;margin:.2rem 0 .4rem">Automate</h1>
     <p style="font-family:sans-serif;color:#d9d0c3;line-height:1.5">Local sign-in for this machine. Production uses Cloudflare Access.</p>
     ${error}
-    <form method="post" action="/api/automate/session" style="display:grid;gap:.75rem;margin-top:1.5rem">
+    <form method="post" action="${API_BASE}/session" style="display:grid;gap:.75rem;margin-top:1.5rem">
       <input type="hidden" name="csrf" value="${escapeHtml(token)}">
       <label style="font-family:sans-serif;font-size:.9rem">Password
         <input name="password" type="password" autocomplete="current-password" required style="display:block;width:100%;margin-top:.35rem;padding:.7rem .8rem;border-radius:10px;border:1px solid #4a4034;background:#1c1914;color:#f4efe6">
@@ -343,7 +347,7 @@ async function login(request: Request, env: Env, nowMs: number): Promise<Respons
     await clearLoginFailures(sql);
     const cookies = [sessionCookie(request, token), csrfCookie(request, issueCsrf())];
     if (form.kind === "form") {
-      return withCookies(redirect("/automate", 303), cookies);
+      return withCookies(redirect(DESK_BASE, 303), cookies);
     }
     return withCookies(json({ ok: true }), cookies);
   } catch (error) {
@@ -472,23 +476,23 @@ async function beginGoogle(env: Env, nowMs: number): Promise<{ url: string }> {
 
 async function finishGoogle(request: Request, env: Env, fetchImpl: typeof fetch, nowMs: number): Promise<Response> {
   const url = new URL(request.url);
-  if (url.searchParams.get("error")) return redirect("/automate/drive?google=denied");
+  if (url.searchParams.get("error")) return redirect(`${DESK_BASE}/drive?google=denied`);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
-  if (!code || !state || !env.TOKEN_ENCRYPTION_KEY) return redirect("/automate/drive?google=error");
+  if (!code || !state || !env.TOKEN_ENCRYPTION_KEY) return redirect(`${DESK_BASE}/drive?google=error`);
   const sql = d1sql(env.DB);
   const saved = await takeOauthState(sql, state);
-  if (!saved) return redirect("/automate/drive?google=state");
-  if (nowMs - Date.parse(saved.created_at) > 10 * 60 * 1000) return redirect("/automate/drive?google=state");
+  if (!saved) return redirect(`${DESK_BASE}/drive?google=state`);
+  if (nowMs - Date.parse(saved.created_at) > 10 * 60 * 1000) return redirect(`${DESK_BASE}/drive?google=state`);
   const verifier = await decryptString(env.TOKEN_ENCRYPTION_KEY, saved.code_verifier_enc);
-  if (!verifier) return redirect("/automate/drive?google=error");
+  if (!verifier) return redirect(`${DESK_BASE}/drive?google=error`);
   try {
     await exchangeCode(sql, env, fetchImpl, code, verifier, nowMs);
   } catch (error) {
     console.error("google_callback", sanitizeMessage(error instanceof Error ? error.message : "unknown"));
-    return redirect("/automate/drive?google=error");
+    return redirect(`${DESK_BASE}/drive?google=error`);
   }
-  return redirect("/automate/drive?google=connected");
+  return redirect(`${DESK_BASE}/drive?google=connected`);
 }
 
 async function listFolder(env: Env, fetchImpl: typeof fetch, url: URL, nowMs: number) {
@@ -842,7 +846,7 @@ function withCookies(response: Response, cookies: string[]): Response {
 }
 
 function redirect(location: string, status = 302): Response {
-  if (!location.startsWith("/automate")) throw new HttpError(400, "bad_redirect");
+  if (!location.startsWith(DESK_BASE)) throw new HttpError(400, "bad_redirect");
   return new Response(null, { status, headers: { location, "cache-control": "no-store" } });
 }
 

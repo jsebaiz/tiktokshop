@@ -21,6 +21,7 @@ import {
   statusLabel,
   type Tone,
 } from "../shared/progress";
+import { API_BASE, DESK_BASE } from "../shared/paths";
 
 const MAX_FILES = 20;
 const MAX_BYTES = 30 * 1024 * 1024;
@@ -64,7 +65,7 @@ function csrf(): string {
 }
 
 function agentPath(slug: string): string {
-  return `/automate/agents/${slug}`;
+  return `${DESK_BASE}/agents/${slug}`;
 }
 
 async function boot(): Promise<void> {
@@ -93,15 +94,15 @@ function renderShell(): void {
   const root = document.querySelector("#app");
   if (!root || !desk) return;
   const nav = h("nav", { class: "nav", "aria-label": "Desk" });
-  nav.append(navLink("/automate", "Crew"), navLink("/automate/drive", "Drive"));
+  nav.append(navLink(DESK_BASE, "Crew"), navLink(`${DESK_BASE}/drive`, "Drive"));
   for (const agent of desk.agents) nav.append(navLink(agentPath(agent.slug), agent.name, agent.slug));
   const brand = h(
     "a",
-    { class: "brand", href: "/automate" },
+    { class: "brand", href: DESK_BASE },
     h("span", { class: "monogram" }, "JB"),
     h("span", {}, "Automate"),
   );
-  brand.addEventListener("click", (event) => go(event, "/automate"));
+  brand.addEventListener("click", (event) => go(event, DESK_BASE));
   const rail = h("aside", { class: "rail" }, brand, nav);
   const main = h("div", { class: "main", id: "main" });
   root.replaceChildren(h("div", { class: "shell" }, rail, main));
@@ -121,7 +122,7 @@ function go(event: Event, href: string): void {
 }
 
 function markNav(): void {
-  const path = window.location.pathname.replace(/\/$/, "") || "/automate";
+  const path = window.location.pathname.replace(/\/$/, "") || DESK_BASE;
   for (const link of document.querySelectorAll<HTMLAnchorElement>(".nav-link")) {
     const active = link.getAttribute("href") === path;
     link.classList.toggle("active", active);
@@ -134,18 +135,18 @@ function renderRoute(): void {
   markNav();
   const main = document.querySelector("#main");
   if (!(main instanceof HTMLElement) || !desk) return;
-  const path = window.location.pathname.replace(/\/$/, "") || "/automate";
+  const path = window.location.pathname.replace(/\/$/, "") || DESK_BASE;
   main.replaceChildren();
-  if (path === "/automate") {
+  if (path === DESK_BASE) {
     main.dataset.paint = "overview";
     void paintOverview(main);
     return;
   }
-  if (path === "/automate/drive") {
+  if (path === `${DESK_BASE}/drive`) {
     renderDrive(main);
     return;
   }
-  const match = path.match(/^\/automate\/agents\/([a-z]+)$/);
+  const match = path.match(new RegExp(`^${DESK_BASE}/agents/([a-z]+)$`));
   const agent = desk.agents.find((item) => item.slug === match?.[1]);
   if (agent) {
     main.dataset.paint = agent.slug;
@@ -473,7 +474,7 @@ function jobDetails(job: JobView): HTMLElement {
 function questItems(data: Bootstrap): Array<{ label: string; ready: boolean; detail: string }> {
   const slackFolders = data.setup.slackFolders.postr && data.setup.slackFolders.ready && data.setup.slackFolders.posted;
   const items = [
-    { label: "Sign-in", ready: true, detail: data.auth === "access" ? "Cloudflare Access is checking this browser." : "Local sign-in is on. Production uses Access." },
+    { label: data.auth === "public" ? "Public" : "Sign-in", ready: true, detail: data.auth === "access" ? "Cloudflare Access is checking this browser." : data.auth === "public" ? "This desk is public. No sign-in is required." : "Local sign-in is on. Production can use public mode or Access." },
     { label: "Encryption", ready: data.setup.encryption, detail: "TOKEN_ENCRYPTION_KEY encrypts Google tokens on the server." },
     { label: "Google", ready: data.setup.google === "connected", detail: data.setup.googleEmail ? `Connected as ${data.setup.googleEmail}.` : "Connect Google from Drive. This desk cannot reuse a Grok Bot connection." },
     { label: "Sheet read", ready: data.setup.scopes.sheetsReadonly, detail: "spreadsheets.readonly reads the Automate Jobs tab." },
@@ -774,7 +775,7 @@ function renderDrive(main: Element): void {
 }
 
 async function connectGoogle(): Promise<void> {
-  const result = await api<{ url: string }>("/api/automate/google/start", { method: "POST", body: "{}" });
+  const result = await api<{ url: string }>(`${API_BASE}/google/start`, { method: "POST", body: "{}" });
   if (!result.ok || !result.data?.url) {
     alert(result.failure?.detail ?? "Google setup is incomplete.");
     return;
@@ -783,13 +784,13 @@ async function connectGoogle(): Promise<void> {
 }
 
 async function disconnectGoogle(): Promise<void> {
-  await api("/api/automate/google/disconnect", { method: "POST", body: "{}" });
-  window.location.href = "/automate/drive";
+  await api(`${API_BASE}/google/disconnect`, { method: "POST", body: "{}" });
+  window.location.href = `${DESK_BASE}/drive`;
 }
 
 async function openPicker(): Promise<void> {
   if (!desk?.picker) return;
-  const token = await api<{ accessToken: string }>("/api/automate/google/picker-token");
+  const token = await api<{ accessToken: string }>(`${API_BASE}/google/picker-token`);
   if (!token.ok || !token.data) {
     window.alert(token.failure?.detail ?? "Picker needs a connected Google account.");
     return;
@@ -820,7 +821,7 @@ async function openPicker(): Promise<void> {
 }
 
 async function acceptPickedFolder(folderId: string): Promise<void> {
-  const result = await api<{ folderId: string; folderKey: string; label: string }>("/api/automate/drive/open", {
+  const result = await api<{ folderId: string; folderKey: string; label: string }>(`${API_BASE}/drive/open`, {
     method: "POST",
     body: JSON.stringify({ folderId }),
   });
@@ -854,7 +855,7 @@ async function showFolder(browser: Element, key: string | null, folderId: string
     label: string;
     items: DriveItem[];
     breadcrumb: Array<{ id: string; name: string }>;
-  }>(`/api/automate/drive/list?${query}`);
+  }>(`${API_BASE}/drive/list?${query}`);
   browser.replaceChildren(h("h2", { class: "section" }, "Browser"));
   if (!result.ok || !result.data) {
     browser.append(h("div", { class: "banner" }, result.failure?.detail ?? "This folder cannot be listed."));
@@ -893,7 +894,7 @@ function tile(item: DriveItem, images: DriveItem[], browser: Element): HTMLEleme
     return button;
   }
   if (item.kind === "image") {
-    const img = h("img", { alt: item.name, src: `/api/automate/drive/files/${encodeURIComponent(item.id)}/thumb` }) as HTMLImageElement;
+    const img = h("img", { alt: item.name, src: `${API_BASE}/drive/files/${encodeURIComponent(item.id)}/thumb` }) as HTMLImageElement;
     const button = h("button", { class: "tile", type: "button" }, img, h("span", {}, item.name));
     button.addEventListener("click", () => openSlideshow(images, item.id));
     return button;
@@ -912,7 +913,7 @@ function openSlideshow(images: DriveItem[], currentId: string): void {
   const show = (): void => {
     const item = images[index];
     if (!item) return;
-    img.src = `/api/automate/drive/files/${encodeURIComponent(item.id)}/preview`;
+    img.src = `${API_BASE}/drive/files/${encodeURIComponent(item.id)}/preview`;
     img.alt = item.name;
     caption.textContent = `${index + 1} of ${images.length} · ${item.name}`;
   };
@@ -1006,7 +1007,7 @@ async function sendFile(row: UploadRow, queue: HTMLElement): Promise<void> {
   row.status = "uploading";
   renderUploadQueue(queue);
   if (!row.uploadId) {
-    const started = await api<{ uploadId: string; chunkSize: number; total: number }>("/api/automate/drive/uploads", {
+    const started = await api<{ uploadId: string; chunkSize: number; total: number }>(`${API_BASE}/drive/uploads`, {
       method: "POST",
       body: JSON.stringify({
         folderKey: selectedFolderKey,
@@ -1026,7 +1027,7 @@ async function sendFile(row: UploadRow, queue: HTMLElement): Promise<void> {
     await pump(row, started.data.chunkSize, queue);
     return;
   }
-  const probe = await api<{ restart?: boolean; received: number }>(`/api/automate/drive/uploads/${row.uploadId}/retry`, {
+  const probe = await api<{ restart?: boolean; received: number }>(`${API_BASE}/drive/uploads/${row.uploadId}/retry`, {
     method: "POST",
     body: "{}",
   });
@@ -1082,7 +1083,7 @@ function putChunk(
 ): Promise<{ ok: boolean; data: unknown; failure: { detail?: string } | null }> {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", `/api/automate/drive/uploads/${uploadId}`);
+    xhr.open("PUT", `${API_BASE}/drive/uploads/${uploadId}`);
     xhr.setRequestHeader("content-range", `bytes ${start}-${end}/${total}`);
     xhr.setRequestHeader("x-automate-csrf", csrf());
     xhr.upload.onprogress = (event) => {

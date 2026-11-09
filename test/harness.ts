@@ -57,10 +57,10 @@ export function baseEnv(db: DatabaseSync): Env {
           "/index.html": "<!doctype html><h1>Jesse Baizer</h1>",
           "/site.css": "body{}",
           "/favicon.svg": "<svg></svg>",
-          "/robots.txt": "User-agent: *\nDisallow: /automate\n",
-          "/automate/index.html": "<!doctype html><div id=app></div>",
-          "/automate/app.js": "console.log('desk')",
-          "/automate/app.css": "body{}",
+          "/robots.txt": "User-agent: *\nDisallow: /automatezynn3\n",
+          "/automatezynn3/index.html": "<!doctype html><div id=app></div>",
+          "/automatezynn3/app.js": "console.log('desk')",
+          "/automatezynn3/app.css": "body{}",
         };
         const file = path === "/" ? "/index.html" : path;
         const body = files[file];
@@ -77,11 +77,11 @@ export function baseEnv(db: DatabaseSync): Env {
 }
 
 export async function login(harness: DeskHarness): Promise<string> {
-  const page = await harness.handle(new Request("http://127.0.0.1/automate/login"));
+  const page = await harness.handle(new Request("http://127.0.0.1/automatezynn3/login"));
   const jar = cookieJar([page]);
   const csrf = cookieValue(jar, "automate_csrf");
   const response = await harness.handle(
-    new Request("http://127.0.0.1/api/automate/session", {
+    new Request("http://127.0.0.1/automatezynn3/api/session", {
       method: "POST",
       headers: {
         "content-type": "application/json",

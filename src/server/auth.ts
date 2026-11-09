@@ -7,7 +7,7 @@ export const CSRF_COOKIE = "automate_csrf";
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
 
 export interface Identity {
-  mode: "dev" | "access";
+  mode: "dev" | "access" | "public";
   email: string | null;
 }
 
@@ -30,8 +30,9 @@ export function devAuthEnabled(env: Env, request: Request): boolean {
   return host === "localhost" || host === "127.0.0.1" || host === "::1";
 }
 
-export function authConfigured(env: Env, request: Request): "dev" | "access" | "unconfigured" {
+export function authConfigured(env: Env, request: Request): "dev" | "access" | "public" | "unconfigured" {
   if (devAuthEnabled(env, request)) return "dev";
+  if (env.AUTOMATE_AUTH_MODE === "public") return "public";
   if (env.CF_ACCESS_TEAM_DOMAIN && env.CF_ACCESS_AUD) return "access";
   return "unconfigured";
 }
@@ -92,6 +93,9 @@ export async function requireIdentity(
       integration: "auth",
       detail: "Owner sign-in is not configured.",
     });
+  }
+  if (mode === "public") {
+    return { mode: "public", email: env.AUTOMATE_OWNER_EMAIL ?? null };
   }
   if (mode === "dev") {
     const session = await readSession(request, env);

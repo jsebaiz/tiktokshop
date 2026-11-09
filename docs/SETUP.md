@@ -1,12 +1,12 @@
 # Automate desk setup
 
-Private desk for Jesse Baizer at `https://jessebaizer.com/automate`. The public homepage stays on `/`. This worker does not attach a production route and does not change DNS. Deploy only after the review steps at the end.
+Private desk for Jesse Baizer at `https://jessebaizer.com/automatezynn3`. The public homepage stays on `/`. This worker does not attach a production route and does not change DNS. Deploy only after the review steps at the end.
 
-The repo did not contain a Pages or Workers app. This project is a Cloudflare Worker with static assets and a D1 database because the desk needs server routes, encrypted tokens, and durable jobs. If something else already serves `jessebaizer.com`, do not point the apex at this worker until that site is accounted for. Path routes for `/automate` and `/api/automate` can sit beside another origin.
+The repo did not contain a Pages or Workers app. This project is a Cloudflare Worker with static assets and a D1 database because the desk needs server routes, encrypted tokens, and durable jobs. If something else already serves `jessebaizer.com`, do not point the apex at this worker until that site is accounted for. A path route for `/automatezynn3*` can sit beside another origin and covers both the desk and `/automatezynn3/api`.
 
 ## What is already in the repo
 
-- Owner sign-in on `/automate` and every `/api/automate` route except the agent callback.
+- The desk at `/automatezynn3` and every `/automatezynn3/api` route except the agent callback.
 - Six agent desks: Fling, Cling, Sling, Bling, Pling, and Slack. Slack is the poster's name, not the Slack app.
 - Task buttons, a job list, and status rules.
 - A Drive browser and resumable photo upload into allowlisted folders.
@@ -31,7 +31,7 @@ npm run migrate:local
 
 `npm test`, `npm run lint`, and `npm run build` do not need Cloudflare credentials. `npm run serve` is a local Node stand-in for the same worker bundle if Wrangler cannot start.
 
-Dev sign-in works only when all of these are true: `AUTOMATE_AUTH_MODE=dev`, `AUTOMATE_ALLOW_DEV_AUTH=1`, and the host is `localhost` or `127.0.0.1`. Open `http://127.0.0.1:8787/automate/login`. Do not set the dev flags on a deployed worker. A password on the public hostname is ignored.
+Set `AUTOMATE_AUTH_MODE=public` on the deployed worker to load the desk without Cloudflare Access or a password. CSRF checks, webhook host allowlists, and Drive folder allowlists stay in place. Dev sign-in works only when all of these are true: `AUTOMATE_AUTH_MODE=dev`, `AUTOMATE_ALLOW_DEV_AUTH=1`, and the host is `localhost` or `127.0.0.1`. Open `http://127.0.0.1:8787/automatezynn3/login`. Do not set the dev flags on a deployed worker. A password on the public hostname is ignored.
 
 ## Environment variable names
 
@@ -39,7 +39,7 @@ Set these as Worker secrets or in `.dev.vars`. No values belong in git.
 
 | Name | Use |
 | --- | --- |
-| `AUTOMATE_AUTH_MODE` | `access` on the deployed worker. `dev` only on your machine. |
+| `AUTOMATE_AUTH_MODE` | `public` on the deployed worker so the desk loads without Cloudflare Access. `access` if you later put Access in front. `dev` only on your machine. |
 | `AUTOMATE_ALLOW_DEV_AUTH` | Set to `1` only in local `.dev.vars`. |
 | `AUTOMATE_DEV_PASSWORD` | Local password. Unused when mode is `access`. |
 | `SESSION_SECRET` | Random string, 32 characters or more. Signs the local session cookie. |
@@ -76,8 +76,8 @@ Generate `SESSION_SECRET` with `openssl rand -base64 32`. Rotating `TOKEN_ENCRYP
 2. Configure the OAuth consent screen. Keep the app in **Testing** and add your Google account as a test user. `drive.readonly` and `spreadsheets.readonly` are sensitive scopes. Testing mode avoids public verification while only you use the desk.
 3. Create an OAuth client of type **Web application**.
 4. Authorized redirect URIs:
-   - Local: `http://127.0.0.1:8787/api/automate/google/callback`
-   - Production: `https://jessebaizer.com/api/automate/google/callback`
+   - Local: `http://127.0.0.1:8787/automatezynn3/api/google/callback`
+   - Production: `https://jessebaizer.com/automatezynn3/api/google/callback`
    - Put the matching one in `GOOGLE_OAUTH_REDIRECT_URL` for that environment.
 5. Enable the Google Drive API and the Google Sheets API.
 6. Optional Picker: create an API key, restrict it to the Picker API, and restrict HTTP referrers to `http://127.0.0.1:8787/*` and `https://jessebaizer.com/*`. Set `GOOGLE_PICKER_API_KEY` and `GOOGLE_CLOUD_PROJECT_NUMBER`.
@@ -106,11 +106,11 @@ Uploads are resumable Drive sessions. The session URI stays on the server. The b
 
 ## Cloudflare Access
 
-Create an Access application for the self-hosted paths:
+The live desk uses `AUTOMATE_AUTH_MODE=public` and does not require Access. If you later want owner-only sign-in, create an Access application for the self-hosted paths:
 
-- `jessebaizer.com/automate`
-- `jessebaizer.com/automate/*`
-- `jessebaizer.com/api/automate/*`
+- `jessebaizer.com/automatezynn3`
+- `jessebaizer.com/automatezynn3/*`
+- `jessebaizer.com/automatezynn3/api/*`
 
 Policy: allow only your identity. Set `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` from that application. Set `AUTOMATE_AUTH_MODE=access`. Set `AUTOMATE_OWNER_EMAIL` to the same identity if you want the worker to reject any other Access user that a wide policy might admit.
 
@@ -119,7 +119,7 @@ The worker checks the `Cf-Access-Jwt-Assertion` header, or the `CF_Authorization
 Add a Bypass policy that is more specific than the protect policy, only for:
 
 ```text
-jessebaizer.com/api/automate/jobs/*/report
+jessebaizer.com/automatezynn3/api/jobs/*/report
 ```
 
 Agents cannot complete an Access login. That path is still authenticated: the server puts a one-job bearer token in the webhook body, stores only its SHA-256, and rejects every other caller. Eight bad tokens lock that job's callback. Cookie sessions are not accepted there.
@@ -144,8 +144,8 @@ Leave `/` outside Access so the public homepage keeps working.
 4. `wrangler.jsonc` has no `routes` and no `custom_domain`. That is deliberate. A deploy of this config publishes the script only. It does not move DNS.
 5. After you know what currently answers `jessebaizer.com`:
    - If this worker should be the whole site, add a route for `jessebaizer.com/*` in the dashboard, or add it to the config in a reviewed change.
-   - If another project already serves the apex, add routes only for `jessebaizer.com/automate*` and `jessebaizer.com/api/automate*`, and keep the public site where it is. Do not copy this repo's homepage over a live site by attaching the apex by accident.
-6. `run_worker_first` is on, so `/automate` assets are not public files. The worker checks auth before it returns them.
+   - If another project already serves the apex, add a route only for `jessebaizer.com/automatezynn3*`, and keep the public site where it is. Do not copy this repo's homepage over a live site by attaching the apex by accident.
+6. `run_worker_first` is on, so `/automatezynn3` assets go through the worker first. In public mode the worker still issues a CSRF cookie before it returns them.
 7. Put every secret in Worker secrets (`npx wrangler secret put NAME`) or the dashboard. Do not put them in `public/`.
 
 D1 tables: `jobs`, `oauth_credentials`, `oauth_states`, `upload_sessions`, `login_attempts`.
@@ -174,7 +174,7 @@ Each wake body has this shape:
     "columns": ["job_id", "agent", "task", "status", "output_url", "note", "updated_at"]
   },
   "report": {
-    "url": "https://jessebaizer.com/api/automate/jobs/<jobId>/report",
+    "url": "https://jessebaizer.com/automatezynn3/api/jobs/<jobId>/report",
     "authorization": "Bearer <one-job token>"
   }
 }
@@ -365,7 +365,7 @@ Use Fling and `summarize-inbox`. It reads and drafts. It does not send email.
 2. Put Access in front of that preview, or test only from a machine where you can reach the worker through Access. Do not turn on dev password mode there.
 3. Set `WEBHOOK_URL_FLING`, `WEBHOOK_KEY_FLING`, `TOKEN_ENCRYPTION_KEY`, `PUBLIC_BASE_URL` (the preview origin, https, no path), and the Access variables. Apply the D1 migration to that database.
 4. Create Fling's webhook routine with the prompt above. Leave Fling's other routines paused or unchanged, and do not press Test if you are not ready for a real run. Saving the routine does not start it.
-5. Open `https://<preview>/automate` through Access. The overview should show Fling's webhook as ready and everything else as setup needed if you have not configured it.
+5. Open `https://<preview>/automatezynn3`. The overview should show Fling's webhook as ready and everything else as setup needed if you have not configured it.
 6. Open Fling and press **Summarize new brand email** once.
 7. The job should show **requested**, delivery accepted, and the sentence that 200 is not completion. The button must not show a completed post.
 8. In Fling's chat, confirm a run started. When Fling writes the sheet or the callback, press **Reconcile**. The status should move to running and then to a terminal status. If neither write arrives, leave it. After 15 minutes the desk marks it **unknown**. You can also press **Mark unknown**. Do not record a success that the agent did not write.
@@ -380,5 +380,5 @@ Stop there if the goal is to prove the path. Do not run Sling or Slack's post ta
 3. Create D1, set `database_id`, set secrets, and apply the remote migration.
 4. Confirm what currently serves `jessebaizer.com` before attaching any route. Attaching a route is a reviewed dashboard step. It is not part of this branch.
 5. Deploy with `npx wrangler deploy` only after Access, secrets, and the route decision are done.
-6. Smoke-test `/` without signing in, then `/automate` through Access, then one non-posting task on the preview or production hostname.
+6. Smoke-test `/` without signing in, then `/automatezynn3` without a login wall, then one non-posting task on the preview or production hostname.
 7. Merge only after that review. Merging does not deploy unless a Cloudflare Git integration is added later. Do not add that integration as part of the first route change unless you mean to.

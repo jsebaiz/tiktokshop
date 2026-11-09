@@ -1,7 +1,7 @@
 import { createSign, generateKeyPairSync } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { resetAccessCertCache } from "../src/server/auth";
-import { authed, connectGoogle, cookieValue, createHarness, login, type FetchCall } from "./harness";
+import { authed, connectGoogle, cookieJar, cookieValue, createHarness, login, type FetchCall } from "./harness";
 
 const WEBHOOK = "https://api2.cursor.sh/automations/webhook/routine123";
 const WEBHOOK_KEY = "crsr_test_key_value";
@@ -17,16 +17,16 @@ describe("rejected auth", () => {
     expect(home.status).toBe(200);
     expect(await home.text()).toContain("Jesse Baizer");
 
-    const api = await harness.handle(new Request("http://127.0.0.1/api/automate/bootstrap"));
+    const api = await harness.handle(new Request("http://127.0.0.1/automatezynn3/api/bootstrap"));
     expect(api.status).toBe(401);
 
     const page = await harness.handle(
-      new Request("http://127.0.0.1/automate", { headers: { accept: "text/html" } }),
+      new Request("http://127.0.0.1/automatezynn3", { headers: { accept: "text/html" } }),
     );
     expect(page.status).toBe(302);
-    expect(page.headers.get("location")).toBe("/automate/login");
+    expect(page.headers.get("location")).toBe("/automatezynn3/login");
 
-    const script = await harness.handle(new Request("http://127.0.0.1/automate/app.js"));
+    const script = await harness.handle(new Request("http://127.0.0.1/automatezynn3/app.js"));
     expect(script.status).toBe(401);
 
     const missing = await harness.handle(new Request("http://127.0.0.1/no-such-page"));
@@ -34,10 +34,10 @@ describe("rejected auth", () => {
     const icon = await harness.handle(new Request("http://127.0.0.1/favicon.ico"));
     expect(icon.status).toBe(200);
 
-    const loginPage = await harness.handle(new Request("http://127.0.0.1/automate/login"));
+    const loginPage = await harness.handle(new Request("http://127.0.0.1/automatezynn3/login"));
     const jar = cookieHeaderFrom(loginPage);
     const wrong = await harness.handle(
-      new Request("http://127.0.0.1/api/automate/session", {
+      new Request("http://127.0.0.1/automatezynn3/api/session", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -63,11 +63,11 @@ describe("rejected auth", () => {
       },
       (call) => certs(call, jwk),
     );
-    const missing = await harness.handle(new Request("http://127.0.0.1/api/automate/bootstrap"));
+    const missing = await harness.handle(new Request("http://127.0.0.1/automatezynn3/api/bootstrap"));
     expect(missing.status).toBe(401);
 
     const bad = await harness.handle(
-      new Request("http://127.0.0.1/api/automate/bootstrap", {
+      new Request("http://127.0.0.1/automatezynn3/api/bootstrap", {
         headers: { "cf-access-jwt-assertion": "a.b.c" },
       }),
     );
@@ -75,7 +75,7 @@ describe("rejected auth", () => {
 
     const wrongAud = signJwt(privateKey, { aud: "other", email: "owner@example.com" });
     const aud = await harness.handle(
-      new Request("http://127.0.0.1/api/automate/bootstrap", {
+      new Request("http://127.0.0.1/automatezynn3/api/bootstrap", {
         headers: { "cf-access-jwt-assertion": wrongAud },
       }),
     );
@@ -83,7 +83,7 @@ describe("rejected auth", () => {
 
     const other = signJwt(privateKey, { aud: "audience-tag", email: "other@example.com" });
     const forbidden = await harness.handle(
-      new Request("http://127.0.0.1/api/automate/bootstrap", {
+      new Request("http://127.0.0.1/automatezynn3/api/bootstrap", {
         headers: { "cf-access-jwt-assertion": other },
       }),
     );
@@ -91,7 +91,7 @@ describe("rejected auth", () => {
 
     const good = signJwt(privateKey, { aud: "audience-tag", email: "owner@example.com" });
     const ok = await harness.handle(
-      new Request("http://127.0.0.1/api/automate/bootstrap", {
+      new Request("http://127.0.0.1/automatezynn3/api/bootstrap", {
         headers: { "cf-access-jwt-assertion": good },
       }),
     );
@@ -101,7 +101,7 @@ describe("rejected auth", () => {
   it("does not honor the dev password outside localhost", async () => {
     const harness = createHarness();
     const response = await harness.handle(
-      new Request("https://example.com/api/automate/session", {
+      new Request("https://example.com/automatezynn3/api/session", {
         method: "POST",
         headers: { "content-type": "application/json", origin: "https://example.com" },
         body: JSON.stringify({ password: "test-password" }),
@@ -111,12 +111,60 @@ describe("rejected auth", () => {
   });
 });
 
+describe("public mode", () => {
+  it("serves the desk and bootstrap without sign-in, keeps CSRF, and leaves the old path unused", async () => {
+    const harness = createHarness({
+      AUTOMATE_AUTH_MODE: "public",
+      AUTOMATE_ALLOW_DEV_AUTH: undefined,
+      AUTOMATE_DEV_PASSWORD: undefined,
+    });
+    const home = await harness.handle(new Request("http://127.0.0.1/"));
+    expect(home.status).toBe(200);
+    expect(await home.text()).toContain("Jesse Baizer");
+
+    const page = await harness.handle(
+      new Request("http://127.0.0.1/automatezynn3", { headers: { accept: "text/html" } }),
+    );
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("id=app");
+
+    const script = await harness.handle(new Request("http://127.0.0.1/automatezynn3/app.js"));
+    expect(script.status).toBe(200);
+
+    const api = await harness.handle(new Request("http://127.0.0.1/automatezynn3/api/bootstrap"));
+    expect(api.status).toBe(200);
+    const body = (await api.json()) as { auth: string };
+    expect(body.auth).toBe("public");
+
+    const jar = cookieJar([api]);
+    const missingCsrf = await harness.handle(
+      new Request("http://127.0.0.1/automatezynn3/api/jobs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://127.0.0.1",
+          cookie: jar,
+        },
+        body: JSON.stringify({ agent: "fling", task: "summarize-inbox", idempotencyKey: "public-csrf-1" }),
+      }),
+    );
+    expect(missingCsrf.status).toBe(403);
+
+    const oldPage = await harness.handle(
+      new Request("http://127.0.0.1/automate", { headers: { accept: "text/html" } }),
+    );
+    expect(oldPage.status).toBe(404);
+    const oldApi = await harness.handle(new Request("http://127.0.0.1/api/automate/bootstrap"));
+    expect(oldApi.status).toBe(404);
+  });
+});
+
 describe("jobs", () => {
   it("treats a webhook 200 as accepted but not completed", async () => {
     const harness = createHarness(webhookEnv(), () => jsonResponse({ success: true, runUuid: "run-12345678" }));
     const jar = await login(harness);
     const response = await harness.handle(
-      authed("/api/automate/jobs", jar, {
+      authed("/automatezynn3/api/jobs", jar, {
         method: "POST",
         body: JSON.stringify({ agent: "fling", task: "summarize-inbox", idempotencyKey: "idem-key-1" }),
       }),
@@ -157,7 +205,7 @@ describe("jobs", () => {
     expect(body.error).toBe("setup_needed");
     expect(body.integration).toBe("webhook");
     expect(harness.calls).toHaveLength(0);
-    const jobs = await harness.handle(authed("/api/automate/jobs", jar));
+    const jobs = await harness.handle(authed("/automatezynn3/api/jobs", jar));
     const listed = (await jobs.json()) as { jobs: unknown[] };
     expect(listed.jobs).toEqual([]);
   });
@@ -182,7 +230,7 @@ describe("jobs", () => {
     const job = ((await created.json()) as { job: { id: string } }).job;
     const old = new Date(Date.now() - 16 * 60 * 1000).toISOString();
     harness.db.prepare("UPDATE jobs SET updated_at = ? WHERE id = ?").run(old, job.id);
-    const listed = await harness.handle(authed("/api/automate/jobs", jar));
+    const listed = await harness.handle(authed("/automatezynn3/api/jobs", jar));
     const body = (await listed.json()) as { jobs: Array<{ id: string; status: string; stale: boolean }> };
     expect(body.jobs[0]?.status).toBe("unknown");
     expect(body.jobs[0]?.stale).toBe(true);
@@ -191,7 +239,7 @@ describe("jobs", () => {
       new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
       job.id,
     );
-    const again = await harness.handle(authed(`/api/automate/jobs/${job.id}`, jar));
+    const again = await harness.handle(authed(`/automatezynn3/api/jobs/${job.id}`, jar));
     const running = (await again.json()) as { job: { status: string; stale: boolean } };
     expect(running.job.status).toBe("running");
     expect(running.job.stale).toBe(true);
@@ -204,7 +252,7 @@ describe("jobs", () => {
     );
     const jar = await login(harness);
     const response = await harness.handle(
-      authed("/api/automate/jobs", jar, {
+      authed("/automatezynn3/api/jobs", jar, {
         method: "POST",
         body: JSON.stringify({ agent: "sling", task: "post-next-brand", idempotencyKey: "idem-post-1" }),
       }),
@@ -216,7 +264,7 @@ describe("jobs", () => {
     expect(token.length).toBeGreaterThan(20);
     expect(JSON.stringify(started)).not.toContain(token);
     const report = await harness.handle(
-      new Request(`http://127.0.0.1/api/automate/jobs/${started.job.id}/report`, {
+      new Request(`http://127.0.0.1/automatezynn3/api/jobs/${started.job.id}/report`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify({ status: "completed", note: "posted" }),
@@ -228,7 +276,7 @@ describe("jobs", () => {
     expect(reported.job.outputUrl).toBeNull();
 
     const bad = await harness.handle(
-      new Request(`http://127.0.0.1/api/automate/jobs/${started.job.id}/report`, {
+      new Request(`http://127.0.0.1/automatezynn3/api/jobs/${started.job.id}/report`, {
         method: "POST",
         headers: { authorization: "Bearer wrong-token", "content-type": "application/json" },
         body: JSON.stringify({ status: "running" }),
@@ -241,7 +289,7 @@ describe("jobs", () => {
     const harness = createHarness(webhookEnv(), () => jsonResponse({ success: true }));
     const jar = await login(harness);
     const response = await harness.handle(
-      new Request("http://127.0.0.1/api/automate/jobs", {
+      new Request("http://127.0.0.1/automatezynn3/api/jobs", {
         method: "POST",
         headers: {
           cookie: jar,
@@ -273,7 +321,7 @@ describe("uploads", () => {
     await connectGoogle(harness.sql);
     const jar = await login(harness);
     const started = await harness.handle(
-      authed("/api/automate/drive/uploads", jar, {
+      authed("/automatezynn3/api/drive/uploads", jar, {
         method: "POST",
         body: JSON.stringify({ folderKey: "brands", name: "look.jpg", mimeType: "image/jpeg", size: 4 }),
       }),
@@ -283,7 +331,7 @@ describe("uploads", () => {
     expect(JSON.stringify(upload)).not.toContain("secret-session");
     expect(JSON.stringify(upload)).not.toContain("googleapis");
     const chunk = await harness.handle(
-      authed(`/api/automate/drive/uploads/${upload.uploadId}`, jar, {
+      authed(`/automatezynn3/api/drive/uploads/${upload.uploadId}`, jar, {
         method: "PUT",
         headers: { "content-range": "bytes 0-3/4" },
         body: new Uint8Array([1, 2, 3, 4]),
@@ -306,7 +354,7 @@ describe("uploads", () => {
     const harness = createHarness();
     const jar = await login(harness);
     const response = await harness.handle(
-      authed("/api/automate/drive/uploads", jar, {
+      authed("/automatezynn3/api/drive/uploads", jar, {
         method: "POST",
         body: JSON.stringify({ folderKey: "brands", name: "look.jpg", mimeType: "image/jpeg", size: 4 }),
       }),
@@ -323,7 +371,7 @@ describe("uploads", () => {
     await connectGoogle(harness.sql);
     const jar = await login(harness);
     const response = await harness.handle(
-      authed("/api/automate/drive/uploads", jar, {
+      authed("/automatezynn3/api/drive/uploads", jar, {
         method: "POST",
         body: JSON.stringify({
           folderId: "nope",
@@ -343,7 +391,7 @@ function webhookEnv() {
 }
 
 function start(jar: string, key: string): Request {
-  return authed("/api/automate/jobs", jar, {
+  return authed("/automatezynn3/api/jobs", jar, {
     method: "POST",
     body: JSON.stringify({ agent: "fling", task: "summarize-inbox", idempotencyKey: key }),
   });

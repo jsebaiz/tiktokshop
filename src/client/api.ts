@@ -1,3 +1,4 @@
+import { API_BASE, DESK_BASE } from "../shared/paths";
 export interface TaskInfo {
   key: string;
   label: string;
@@ -42,7 +43,7 @@ export interface FolderInfo {
 }
 
 export interface Bootstrap {
-  auth: "dev" | "access";
+  auth: "dev" | "access" | "public";
   ownerEmail: string | null;
   agents: AgentInfo[];
   setup: {
@@ -102,7 +103,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<ApiR
   }
   const response = await fetch(path, { ...init, headers });
   if (response.status === 401) {
-    window.location.href = "/automate/login";
+    window.location.href = `${DESK_BASE}/login`;
   }
   const text = await response.text();
   let parsed: unknown = null;
@@ -121,25 +122,25 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<ApiR
 }
 
 export function loadBootstrap(): Promise<ApiResult<Bootstrap>> {
-  return api<Bootstrap>("/api/automate/bootstrap");
+  return api<Bootstrap>(`${API_BASE}/bootstrap`);
 }
 
 export function loadJobs(agent?: string): Promise<ApiResult<{ jobs: JobView[] }>> {
   const query = agent ? `?agent=${encodeURIComponent(agent)}` : "";
-  return api<{ jobs: JobView[] }>(`/api/automate/jobs${query}`);
+  return api<{ jobs: JobView[] }>(`${API_BASE}/jobs${query}`);
 }
 
 export function startJob(agent: string, task: string, idempotencyKey: string): Promise<ApiResult<{ job: JobView }>> {
-  return api("/api/automate/jobs", {
+  return api(`${API_BASE}/jobs`, {
     method: "POST",
     body: JSON.stringify({ agent, task, idempotencyKey }),
   });
 }
 
 export function reconcileJob(id: string, body: Record<string, unknown> = { action: "refresh" }): Promise<ApiResult<{ job: JobView; sheet: string; detail?: string }>> {
-  return api(`/api/automate/jobs/${id}/reconcile`, { method: "POST", body: JSON.stringify(body) });
+  return api(`${API_BASE}/jobs/${id}/reconcile`, { method: "POST", body: JSON.stringify(body) });
 }
 
 export function reconcileAll(): Promise<ApiResult<{ jobs: JobView[]; sheets: Array<{ agentGroup: string; sheet: string; detail?: string }> }>> {
-  return api("/api/automate/jobs/reconcile", { method: "POST", body: "{}" });
+  return api(`${API_BASE}/jobs/reconcile`, { method: "POST", body: "{}" });
 }

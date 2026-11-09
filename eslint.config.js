@@ -6,7 +6,7 @@ export default tseslint.config(
       "dist/**",
       "node_modules/**",
       ".wrangler/**",
-      "public/automate/app.js",
+      "public/automatezynn3/app.js",
       "coverage/**",
     ],
   },

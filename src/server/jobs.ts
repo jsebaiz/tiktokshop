@@ -18,6 +18,7 @@ import {
   type StaleThresholds,
 } from "../shared/status";
 import { isAllowedWebhookUrl } from "../shared/urls";
+import { API_BASE } from "../shared/paths";
 import { randomToken, safeEqual, sanitizeMessage, sha256Hex } from "./crypto";
 import type { Env } from "./env";
 import { readJobSheet, requireAccessToken, scopeFlags, sheetForAgent } from "./google";
@@ -274,7 +275,7 @@ function callbackUrl(env: Env, jobId: string): string | null {
   }
   if (url.protocol !== "https:" || url.username || url.password) return null;
   if (url.pathname !== "/" && url.pathname !== "") return null;
-  return `${url.origin}/api/automate/jobs/${jobId}/report`;
+  return `${url.origin}${API_BASE}/jobs/${jobId}/report`;
 }
 
 export async function jobsForApi(sql: Sql, agent: string | null, nowMs: number, thresholds: StaleThresholds): Promise<JobView[]> {

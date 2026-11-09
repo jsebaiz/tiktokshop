@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build:client": "esbuild src/client/main.ts --bundle --format=esm --outfile=public/automate/app.js --target=es2022",
+    "build:client": "esbuild src/client/main.ts --bundle --format=esm --outfile=public/automatezynn3/app.js --target=es2022",
     "build:worker": "esbuild src/index.ts --bundle --format=esm --outfile=dist/worker.js --target=es2022 --platform=neutral",
     "typecheck": "tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "build": "npm run build:client && npm run build:worker && npm run typecheck",
