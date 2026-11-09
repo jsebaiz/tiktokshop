@@ -1,0 +1,27 @@
+{
+  "name": "tiktokshop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build:client": "esbuild src/client/main.ts --bundle --format=esm --outfile=public/automate/app.js --target=es2022",
+    "build:worker": "esbuild src/index.ts --bundle --format=esm --outfile=dist/worker.js --target=es2022 --platform=neutral",
+    "typecheck": "tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "build": "npm run build:client && npm run build:worker && npm run typecheck",
+    "lint": "eslint .",
+    "pretest": "npm run build:client",
+    "test": "vitest run",
+    "dev": "npm run build:client && wrangler dev --local --port 8787",
+    "serve": "npm run build:client && npm run build:worker && node scripts/serve.mjs",
+    "migrate:local": "wrangler d1 migrations apply automate --local"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261109.1",
+    "esbuild": "^0.25.11",
+    "eslint": "^9.39.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.3",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.46.0"
+  }
+}

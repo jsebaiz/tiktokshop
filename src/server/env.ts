@@ -1,0 +1,37 @@
+export interface Env {
+  DB: D1Database;
+  ASSETS: Fetcher;
+  AUTOMATE_AUTH_MODE?: string;
+  AUTOMATE_ALLOW_DEV_AUTH?: string;
+  AUTOMATE_DEV_PASSWORD?: string;
+  AUTOMATE_OWNER_EMAIL?: string;
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  CF_ACCESS_AUD?: string;
+  SESSION_SECRET?: string;
+  TOKEN_ENCRYPTION_KEY?: string;
+  GOOGLE_OAUTH_CLIENT_ID?: string;
+  GOOGLE_OAUTH_CLIENT_SECRET?: string;
+  GOOGLE_OAUTH_REDIRECT_URL?: string;
+  GOOGLE_OAUTH_SCOPES?: string;
+  GOOGLE_PICKER_API_KEY?: string;
+  GOOGLE_CLOUD_PROJECT_NUMBER?: string;
+  PUBLIC_BASE_URL?: string;
+  WEBHOOK_URL_FLING?: string;
+  WEBHOOK_KEY_FLING?: string;
+  WEBHOOK_URL_CLING?: string;
+  WEBHOOK_KEY_CLING?: string;
+  WEBHOOK_URL_SLING?: string;
+  WEBHOOK_KEY_SLING?: string;
+  WEBHOOK_URL_BLING?: string;
+  WEBHOOK_KEY_BLING?: string;
+  WEBHOOK_URL_PLING?: string;
+  WEBHOOK_KEY_PLING?: string;
+  WEBHOOK_URL_SLACK?: string;
+  WEBHOOK_KEY_SLACK?: string;
+  SLACK_LOG_SHEET_ID?: string;
+  SLACK_FOLDER_POSTR?: string;
+  SLACK_FOLDER_READY?: string;
+  SLACK_FOLDER_POSTED?: string;
+  JOB_STALE_REQUESTED_MS?: string;
+  JOB_STALE_RUNNING_MS?: string;
+}
