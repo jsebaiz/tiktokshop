@@ -13,6 +13,7 @@ import {
 import {
   attentionRank,
   completionStreak,
+  doneThisWeek,
   jobSummary,
   jobTone,
   levelProgress,
@@ -168,6 +169,9 @@ function hero(jobs: JobView[]): HTMLElement {
   const progress = levelProgress(done.length);
   const streak = completionStreak(done.map((job) => job.updatedAt), Date.now());
   const title = h("div", { class: "level-line" }, playerBadge(), h("h1", { class: "title" }, `Level ${progress.level}`));
+  const needs = jobs.filter((job) => attentionRank(job.status, job.stale) !== null).length;
+  const running = jobs.filter((job) => job.status === "running").length;
+  const week = doneThisWeek(done.map((job) => job.updatedAt), Date.now());
   const stats = h(
     "div",
     { class: "hero-stats" },
@@ -181,7 +185,18 @@ function hero(jobs: JobView[]): HTMLElement {
     ),
     xpBar(progress.current, progress.goal, `${progress.current} of ${progress.goal} toward the next level`, "player"),
   );
-  return h("header", { class: "hero" }, stats);
+  const tiles = h(
+    "div",
+    { class: "stat-tiles" },
+    statTile(running, "Running"),
+    statTile(needs, "Needs you"),
+    statTile(week, "Done this week"),
+  );
+  return h("header", { class: "hero" }, stats, tiles);
+}
+
+function statTile(value: number, label: string): HTMLElement {
+  return h("div", { class: "stat-tile" }, h("strong", {}, String(value)), h("span", {}, label));
 }
 
 function questBlock(data: Bootstrap): HTMLElement {
@@ -194,7 +209,11 @@ function questBlock(data: Bootstrap): HTMLElement {
   const card = fold("Quest details", list);
   card.classList.add("quest-card");
   const summary = card.querySelector("summary");
-  summary?.append(h("span", { class: "count-badge" }, `${ready}/${items.length}`));
+  const mini = h("span", { class: "quest-mini" });
+  const track = h("span", { class: "mini-track", "aria-hidden": "true" });
+  track.append(h("span", { class: fillWidth(items.length === 0 ? 0 : (ready / items.length) * 100) }));
+  mini.append(track, h("span", {}, `${ready}/${items.length}`));
+  summary?.append(mini);
   return card;
 }
 
@@ -313,9 +332,9 @@ async function paintAgent(main: HTMLElement, agent: AgentInfo): Promise<void> {
     medallion(agent.slug),
     h(
       "div",
-      {},
+      { class: "agent-head-copy" },
       h("p", { class: "kicker" }, shortRole(agent)),
-      h("h1", { class: "title" }, agent.name),
+      h("div", { class: "name-line" }, h("h1", { class: "title" }, agent.name), webhook !== "ready" ? chip("amber", "Setup") : h("span", {})),
       h(
         "div",
         { class: "stat-row" },
@@ -326,7 +345,6 @@ async function paintAgent(main: HTMLElement, agent: AgentInfo): Promise<void> {
     ),
   );
   head.dataset.agent = agent.slug;
-  if (webhook !== "ready") head.append(chip("amber", "Setup"));
   const tasks = h("div", { class: "task-grid" });
   for (const task of agent.tasks) {
     const name = shortTask(task.key, task.label);
@@ -500,8 +518,9 @@ function xpBar(current: number, goal: number, label: string, tint?: string): HTM
     "aria-valuenow": String(Math.max(0, current)),
   });
   for (let index = 0; index < safeGoal; index += 1) {
-    const state = index < current ? "on" : index === current ? "stub" : "off";
-    bar.append(h("span", { class: `seg ${state}` }));
+    const seg = h("span", { class: index < current ? "seg on" : "seg" });
+    if (current <= 0 && index === 0) seg.append(h("span", { class: "xp-dot" }));
+    bar.append(seg);
   }
   wrap.append(bar);
   return wrap;
@@ -693,7 +712,9 @@ function renderDrive(main: Element): void {
   } else {
     googleRow.append(chip("amber", "Setup"));
   }
-  googleRow.append(fold("Browse note", h("p", {}, "Listing existing folders needs drive.readonly. drive.file can upload after you open a folder with Picker. Uploads are not posts.")));
+  const browse = fold("Browse note", h("p", {}, "Listing existing folders needs drive.readonly. drive.file can upload after you open a folder with Picker. Uploads are not posts."));
+  browse.classList.add("rules");
+  googleRow.append(browse);
   if (desk.picker && desk.setup.google === "connected") {
     const pick = h("button", { class: "text-button", type: "button" }, "Open with Picker");
     pick.addEventListener("click", () => {
@@ -707,7 +728,7 @@ function renderDrive(main: Element): void {
   side.append(h("h2", { class: "section" }, "Upload destination"));
   const choices = h("div", { class: "dest" });
   for (const folder of desk.folders) {
-    const button = h("button", { class: "start", type: "button" }, h("span", { class: "start-name" }, folder.label), h("span", { class: "start-kicker" }, folder.configured ? "Choose" : "Setup")) as HTMLButtonElement;
+    const button = h("button", { class: "drive-choice", type: "button" }, h("span", { class: "start-name" }, folder.label), h("span", { class: "start-kicker" }, folder.configured ? "Choose" : "Setup")) as HTMLButtonElement;
     button.disabled = !folder.configured || desk.setup.google !== "connected";
     button.addEventListener("click", () => {
       selectedFolderKey = folder.key;

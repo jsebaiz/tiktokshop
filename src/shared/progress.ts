@@ -15,6 +15,14 @@ export function levelProgress(completed: number): LevelProgress {
   };
 }
 
+export function doneThisWeek(isoTimes: readonly string[], nowMs: number): number {
+  const week = 7 * 86400000;
+  return isoTimes.filter((iso) => {
+    const time = Date.parse(iso);
+    return !Number.isNaN(time) && time <= nowMs && nowMs - time <= week;
+  }).length;
+}
+
 export function completionStreak(isoTimes: readonly string[], nowMs: number): number {
   const days = new Set<string>();
   for (const iso of isoTimes) {

@@ -3,6 +3,7 @@ import { AGENTS } from "../src/shared/catalog";
 import {
   attentionRank,
   completionStreak,
+  doneThisWeek,
   jobSummary,
   jobTone,
   levelProgress,
@@ -28,6 +29,8 @@ describe("real progress math", () => {
     ).toBe(2);
     expect(completionStreak(["2026-11-08T12:00:00.000Z"], now)).toBe(1);
     expect(completionStreak(["2026-11-06T12:00:00.000Z"], now)).toBe(0);
+    expect(doneThisWeek([], now)).toBe(0);
+    expect(doneThisWeek(["2026-11-08T12:00:00.000Z", "2026-10-01T12:00:00.000Z"], now)).toBe(1);
     expect(
       completionStreak(["2026-11-09T12:00:00.000Z", "2026-11-07T12:00:00.000Z"], now),
     ).toBe(1);
